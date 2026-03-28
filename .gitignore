@@ -1,0 +1,10 @@
+__pycache__/
+*.log
+.claude/
+*.zip
+*.tar.gz
+*.exe
+*.dll
+*.so
+*.dylib
+test/output/
