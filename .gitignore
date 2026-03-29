@@ -8,3 +8,4 @@ __pycache__/
 *.so
 *.dylib
 test/output/
+app_data/

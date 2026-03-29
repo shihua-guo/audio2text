@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SRT 语义检索</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <h1>SRT 语义检索</h1>
+        <p>选择字幕目录，建立本地索引，再用自然语言搜索对应片段。</p>
+      </div>
+      <div class="header-actions">
+        <button id="choose-folder-btn" class="secondary">选择文件夹</button>
+        <button id="reindex-btn">增量更新索引</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="panel sidebar">
+        <section class="panel-section">
+          <h2>目录</h2>
+          <label class="field-label" for="root-path">字幕根目录</label>
+          <div class="path-row">
+            <input id="root-path" type="text" placeholder="例如：D:\video\srt">
+            <button id="summary-btn" class="secondary">读取状态</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>模型</h2>
+          <label class="field-label" for="model-name">Embedding 模型</label>
+          <input id="model-name" type="text" value="Qwen/Qwen3-Embedding-0.6B">
+          <p class="hint">CPU 建议先用 0.6B；机器足够强时可改成 4B。</p>
+        </section>
+
+        <section class="panel-section">
+          <h2>索引状态</h2>
+          <dl id="summary-list" class="summary-list">
+            <div><dt>目录</dt><dd id="summary-root">未选择</dd></div>
+            <div><dt>文件数</dt><dd id="summary-files">0</dd></div>
+            <div><dt>Chunk 数</dt><dd id="summary-chunks">0</dd></div>
+            <div><dt>已索引文件</dt><dd id="summary-indexed">0</dd></div>
+            <div><dt>最近更新时间</dt><dd id="summary-time">-</dd></div>
+          </dl>
+        </section>
+
+        <section class="panel-section">
+          <h2>任务进度</h2>
+          <div class="job-box">
+            <div id="job-state">等待开始</div>
+            <div id="job-message" class="muted">尚未运行索引任务</div>
+            <div class="progress">
+              <div id="job-progress-bar"></div>
+            </div>
+            <div id="job-progress-text" class="muted">0 / 0</div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="panel content">
+        <section class="search-card">
+          <div class="search-row">
+            <input id="query-input" type="text" placeholder="例如：老师开始讲考试规则的地方">
+            <button id="search-btn">搜索</button>
+          </div>
+          <div class="search-row compact">
+            <label for="limit-input">返回条数</label>
+            <input id="limit-input" type="number" value="10" min="1" max="50">
+          </div>
+        </section>
+
+        <section class="results-grid">
+          <div class="results-panel">
+            <div class="section-head">
+              <h2>搜索结果</h2>
+              <span id="result-count" class="muted">0 条</span>
+            </div>
+            <div id="results" class="results-list">
+              <div class="empty-state">还没有搜索结果。</div>
+            </div>
+          </div>
+
+          <div class="detail-panel">
+            <div class="section-head">
+              <h2>详情预览</h2>
+            </div>
+            <div id="detail" class="detail-card empty-state">
+              点击左侧结果后，这里会显示上下文和时间范围。
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

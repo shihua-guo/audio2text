@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+numpy
+torch
+transformers>=4.51.0
+pysrt
+scikit-learn
