@@ -26,42 +26,43 @@ import subprocess
 import shutil
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
-import sherpa_onnx
-
-# --- Add CapsWriter-Offline to path ---
-CAPS_WRITER_DIR = r"C:\Users\shihu\Documents\software\CapsWriter-Offline-20260304\CapsWriter-Offline"
-INTERNAL_DIR = os.path.join(CAPS_WRITER_DIR, "internal")
-for path in [CAPS_WRITER_DIR, INTERNAL_DIR]:
-    if path not in sys.path:
-        sys.path.append(path)
+try:
+    import sherpa_onnx
+except ImportError:
+    sherpa_onnx = None
 
 try:
-    from util.qwen_asr_gguf import create_asr_engine
+    from funasr_onnx import CT_Transformer
 except ImportError:
-    print("警告: 无法从 CapsWriter-Offline 加载 create_asr_engine")
-    create_asr_engine = None
-
-from funasr_onnx import CT_Transformer
+    CT_Transformer = None
 
 # 全局配置
 SAMPLE_RATE = 16000
 NUM_THREADS = 4
 
-# 模型路径配置
-MODEL_DIR = r"C:\Users\shihu\Documents\software\CapsWriter-Offline-20260304\CapsWriter-Offline\models\Qwen3-ASR\Qwen3-ASR-1.7B"
-
-QWEN3_ASR_FRONTEND = os.path.join(MODEL_DIR, "qwen3_asr_encoder_frontend.int4.onnx")
-QWEN3_ASR_BACKEND = os.path.join(MODEL_DIR, "qwen3_asr_encoder_backend.int4.onnx")
-QWEN3_ASR_LLM = os.path.join(MODEL_DIR, "qwen3_asr_llm.q4_k.gguf")
-
-QWEN3_ALIGNER_FRONTEND = os.path.join(MODEL_DIR, "qwen3_aligner_encoder_frontend.int4.onnx")
-QWEN3_ALIGNER_BACKEND = os.path.join(MODEL_DIR, "qwen3_aligner_encoder_backend.int4.onnx")
-QWEN3_ALIGNER_LLM = os.path.join(MODEL_DIR, "qwen3_aligner_llm.q4_k.gguf")
-
-PUNC_MODEL_DIR = r"C:\Users\shihu\Documents\software\CapsWriter-Offline-20260304\CapsWriter-Offline\models\Punct-CT-Transformer\punc_ct-transformer_cn-en"
+SCRIPT_DIR = Path(__file__).resolve().parent
+MODEL_DIR_ENV = "AUDIO2TEXT_MODEL_DIR"
+CAPS_WRITER_DIR_ENV = "AUDIO2TEXT_CAPSWRITER_DIR"
+PUNC_MODEL_DIR_ENV = "AUDIO2TEXT_PUNC_MODEL_DIR"
+LEGACY_CAPS_WRITER_DIR_ENV = "CAPS_WRITER_DIR"
+DEFAULT_QWEN3_MODEL_SUBDIR = Path("models") / "Qwen3-ASR" / "Qwen3-ASR-1.7B"
+DEFAULT_PUNC_MODEL_SUBDIR = (
+    Path("models") / "Punct-CT-Transformer" / "punc_ct-transformer_cn-en"
+)
+QWEN3_ASR_FILENAMES = (
+    "qwen3_asr_encoder_frontend.int4.onnx",
+    "qwen3_asr_encoder_backend.int4.onnx",
+    "qwen3_asr_llm.q4_k.gguf",
+)
+QWEN3_ALIGNER_FILENAMES = (
+    "qwen3_aligner_encoder_frontend.int4.onnx",
+    "qwen3_aligner_encoder_backend.int4.onnx",
+    "qwen3_aligner_llm.q4_k.gguf",
+)
+QWEN3_TOKENIZER_FILENAMES = ("vocab.json", "merges.txt", "tokenizer_config.json")
 
 # 是否启用 aligner
 USE_ALIGNER = True
@@ -71,6 +72,180 @@ QWEN_MEMORY_CHUNKS = 1
 MAX_SUBTITLE_CHARS = 35
 MAX_SUBTITLE_DURATION = 6.0
 MAX_SUBTITLE_GAP = 1.0
+
+
+@dataclass
+class ModelPaths:
+    """运行时模型路径"""
+
+    model_dir: Optional[Path]
+    punc_model_dir: Optional[Path] = None
+    capswriter_dir: Optional[Path] = None
+
+    def required_asr_files(self) -> List[Path]:
+        if self.model_dir is None:
+            return []
+        return [self.model_dir / name for name in QWEN3_ASR_FILENAMES]
+
+    def optional_aligner_files(self) -> List[Path]:
+        if self.model_dir is None:
+            return []
+        return [self.model_dir / name for name in QWEN3_ALIGNER_FILENAMES]
+
+    def tokenizer_files(self) -> List[Path]:
+        if self.model_dir is None:
+            return []
+        return [self.model_dir / name for name in QWEN3_TOKENIZER_FILENAMES]
+
+    @property
+    def qwen3_asr_frontend(self) -> Path:
+        return self.model_dir / QWEN3_ASR_FILENAMES[0]
+
+    @property
+    def qwen3_asr_backend(self) -> Path:
+        return self.model_dir / QWEN3_ASR_FILENAMES[1]
+
+    @property
+    def qwen3_asr_llm(self) -> Path:
+        return self.model_dir / QWEN3_ASR_FILENAMES[2]
+
+    @property
+    def qwen3_aligner_frontend(self) -> Path:
+        return self.model_dir / QWEN3_ALIGNER_FILENAMES[0]
+
+    @property
+    def qwen3_aligner_backend(self) -> Path:
+        return self.model_dir / QWEN3_ALIGNER_FILENAMES[1]
+
+    @property
+    def qwen3_aligner_llm(self) -> Path:
+        return self.model_dir / QWEN3_ALIGNER_FILENAMES[2]
+
+
+def normalize_path(path_value: Optional[str]) -> Optional[Path]:
+    """展开环境变量和用户目录"""
+    if not path_value:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(path_value))
+    return Path(expanded)
+
+
+def configured_path(*values: Optional[str]) -> Optional[Path]:
+    """返回首个已配置路径，不要求路径已存在"""
+    for value in values:
+        path = normalize_path(value)
+        if path is not None:
+            return path
+    return None
+
+
+def discover_capswriter_dir_from_model_dir(model_dir: Optional[Path]) -> Optional[Path]:
+    """从模型目录向上查找 CapsWriter 根目录"""
+    if model_dir is None:
+        return None
+
+    for candidate in model_dir.parents:
+        util_path = candidate / "util" / "qwen_asr_gguf.py"
+        if util_path.exists():
+            return candidate
+
+    return None
+
+
+def resolve_model_dir(explicit_model_dir: Optional[str], capswriter_dir: Optional[Path]) -> Optional[Path]:
+    """解析 ASR 模型目录"""
+    configured = configured_path(explicit_model_dir, os.getenv(MODEL_DIR_ENV))
+    if configured is not None:
+        return configured
+
+    candidates: List[Path] = []
+    if capswriter_dir is not None:
+        candidates.append(capswriter_dir / DEFAULT_QWEN3_MODEL_SUBDIR)
+
+    candidates.extend(
+        [
+            Path.cwd() / DEFAULT_QWEN3_MODEL_SUBDIR,
+            SCRIPT_DIR / DEFAULT_QWEN3_MODEL_SUBDIR,
+            Path.cwd() / "Qwen3-ASR-1.7B",
+            SCRIPT_DIR / "Qwen3-ASR-1.7B",
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return candidates[0] if candidates else None
+
+
+def resolve_punc_model_dir(explicit_punc_model_dir: Optional[str], capswriter_dir: Optional[Path]) -> Optional[Path]:
+    """解析标点模型目录"""
+    configured = configured_path(explicit_punc_model_dir, os.getenv(PUNC_MODEL_DIR_ENV))
+    if configured is not None:
+        return configured
+
+    candidates: List[Path] = []
+    if capswriter_dir is not None:
+        candidates.append(capswriter_dir / DEFAULT_PUNC_MODEL_SUBDIR)
+
+    candidates.extend(
+        [
+            Path.cwd() / DEFAULT_PUNC_MODEL_SUBDIR,
+            SCRIPT_DIR / DEFAULT_PUNC_MODEL_SUBDIR,
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+def build_model_paths(
+    explicit_model_dir: Optional[str] = None,
+    explicit_punc_model_dir: Optional[str] = None,
+    explicit_capswriter_dir: Optional[str] = None,
+) -> ModelPaths:
+    """根据命令行参数和环境变量解析模型路径"""
+    capswriter_dir = configured_path(
+        explicit_capswriter_dir,
+        os.getenv(CAPS_WRITER_DIR_ENV),
+        os.getenv(LEGACY_CAPS_WRITER_DIR_ENV),
+    )
+    model_dir = resolve_model_dir(explicit_model_dir, capswriter_dir)
+
+    if capswriter_dir is None:
+        capswriter_dir = discover_capswriter_dir_from_model_dir(model_dir)
+        if model_dir is None and capswriter_dir is not None:
+            model_dir = resolve_model_dir(explicit_model_dir, capswriter_dir)
+
+    punc_model_dir = resolve_punc_model_dir(explicit_punc_model_dir, capswriter_dir)
+    return ModelPaths(model_dir=model_dir, punc_model_dir=punc_model_dir, capswriter_dir=capswriter_dir)
+
+
+def load_capswriter_adapter(
+    capswriter_dir: Optional[Path],
+) -> Tuple[Optional[Callable[..., Any]], Optional[str]]:
+    """按需加载 CapsWriter 的 Qwen3 适配器"""
+    if capswriter_dir is None:
+        return None, None
+
+    adapter_path = capswriter_dir / "util" / "qwen_asr_gguf.py"
+    if not adapter_path.exists():
+        return None, f"未在 {capswriter_dir} 找到 util/qwen_asr_gguf.py"
+
+    for path in [capswriter_dir, capswriter_dir / "internal"]:
+        path_str = str(path)
+        if path_str not in sys.path:
+            sys.path.insert(0, path_str)
+
+    try:
+        from util.qwen_asr_gguf import create_asr_engine as capswriter_create_asr_engine
+    except Exception as exc:
+        return None, f"从 {capswriter_dir} 导入 util.qwen_asr_gguf.create_asr_engine 失败: {exc}"
+
+    return capswriter_create_asr_engine, None
 
 
 def format_srt_timestamp(seconds: float) -> str:
@@ -152,29 +327,106 @@ class ProgressManager:
 class AudioTranscriber:
     """音频转文本器（Qwen3 ASR）"""
 
-    def __init__(self, num_threads: int = NUM_THREADS):
+    def __init__(
+        self,
+        num_threads: int = NUM_THREADS,
+        model_paths: Optional[ModelPaths] = None,
+        create_asr_engine: Optional[Callable[..., Any]] = None,
+        capswriter_status: Optional[str] = None,
+        use_aligner: bool = USE_ALIGNER,
+    ):
         self.num_threads = num_threads
+        self.model_paths = model_paths or build_model_paths()
+        self.create_asr_engine = create_asr_engine
+        self.capswriter_status = capswriter_status
+        self.use_aligner = use_aligner
         self.asr_model = None
         self.aligner = None
         self.punc_model = None
         self.load_models()
+
+    def _check_required_model_files(self):
+        if self.model_paths.model_dir is None:
+            raise FileNotFoundError(
+                f"未找到 Qwen3 ASR 模型目录。请使用 --model-dir 或环境变量 {MODEL_DIR_ENV} 指向包含 "
+                f"{', '.join(QWEN3_ASR_FILENAMES)} 的目录。"
+            )
+
+        missing_files = [path for path in self.model_paths.required_asr_files() if not path.exists()]
+        if missing_files:
+            missing_text = "\n".join(str(path) for path in missing_files)
+            raise FileNotFoundError(
+                "未找到完整的 Qwen3 ASR 模型文件，请确认 --model-dir 指向正确目录。缺失文件:\n"
+                f"{missing_text}"
+            )
+
+    def _load_native_qwen3_asr(self):
+        if sherpa_onnx is None:
+            raise RuntimeError(
+                "未安装 sherpa-onnx，且 CapsWriter 适配器不可用。请安装依赖，或者通过 "
+                f"--capswriter-dir / 环境变量 {CAPS_WRITER_DIR_ENV} 指向 CapsWriter-Offline。"
+            )
+
+        recognizer_cls = getattr(sherpa_onnx, "OfflineRecognizer", None)
+        if recognizer_cls is None:
+            raise RuntimeError("当前 sherpa-onnx 安装不包含 OfflineRecognizer。")
+
+        if hasattr(recognizer_cls, "from_qwen3_asr"):
+            missing_tokenizers = [path for path in self.model_paths.tokenizer_files() if not path.exists()]
+            if missing_tokenizers:
+                missing_text = "\n".join(str(path) for path in missing_tokenizers)
+                raise RuntimeError(
+                    "当前未能加载 CapsWriter 适配器，而 sherpa-onnx 原生 Qwen3-ASR API 还需要 tokenizer 文件。"
+                    f"\n缺失文件:\n{missing_text}\n"
+                    f"请安装 CapsWriter-Offline 并设置 --capswriter-dir，或补齐上述 tokenizer 文件。"
+                )
+
+            self.asr_model = recognizer_cls.from_qwen3_asr(
+                conv_frontend=str(self.model_paths.qwen3_asr_frontend),
+                encoder=str(self.model_paths.qwen3_asr_backend),
+                decoder=str(self.model_paths.qwen3_asr_llm),
+                tokenizer=str(self.model_paths.model_dir),
+                num_threads=self.num_threads,
+                sample_rate=SAMPLE_RATE,
+                debug=False,
+            )
+            print("Qwen3 ASR 模型加载成功 (使用 sherpa-onnx 原生 API)")
+            return
+
+        if hasattr(recognizer_cls, "from_qwen3"):
+            self.asr_model = recognizer_cls.from_qwen3(
+                encoder_frontend=str(self.model_paths.qwen3_asr_frontend),
+                encoder_backend=str(self.model_paths.qwen3_asr_backend),
+                decoder=str(self.model_paths.qwen3_asr_llm),
+                num_threads=self.num_threads,
+                sample_rate=SAMPLE_RATE,
+                debug=False,
+            )
+            print("Qwen3 ASR 模型加载成功 (使用 sherpa-onnx 旧版原生 API)")
+            return
+
+        raise RuntimeError(
+            "当前安装的 sherpa-onnx 不包含 Qwen3-ASR Python API。"
+            " PyPI 版 1.12.34 提供的是 OfflineRecognizer.from_qwen3_asr，不是 from_qwen3。"
+        )
 
     def load_models(self):
         """加载模型"""
         print("正在加载模型...")
         start_time = time.time()
 
-        # 检查Qwen3 ASR模型
-        for path in [QWEN3_ASR_FRONTEND, QWEN3_ASR_BACKEND, QWEN3_ASR_LLM]:
-            if not os.path.exists(path):
-                print(f"错误: 未找到Qwen3 ASR模型文件: {path}")
-                sys.exit(1)
+        self._check_required_model_files()
 
         print("加载 Qwen3 ASR 模型...")
+        if self.model_paths.capswriter_dir is not None:
+            print(f"CapsWriter 目录: {self.model_paths.capswriter_dir}")
+        if self.capswriter_status:
+            print(f"CapsWriter 适配器不可用: {self.capswriter_status}")
+
         try:
-            if create_asr_engine:
-                self.asr_model = create_asr_engine(
-                    model_dir=MODEL_DIR,
+            if self.create_asr_engine:
+                self.asr_model = self.create_asr_engine(
+                    model_dir=str(self.model_paths.model_dir),
                     encoder_frontend_fn="qwen3_asr_encoder_frontend.int4.onnx",
                     encoder_backend_fn="qwen3_asr_encoder_backend.int4.onnx",
                     llm_fn="qwen3_asr_llm.q4_k.gguf",
@@ -184,38 +436,32 @@ class AudioTranscriber:
                     use_dml=False,
                     vulkan_enable=False,
                     verbose=False,
-                    enable_aligner=USE_ALIGNER,
+                    enable_aligner=self.use_aligner,
                 )
                 print("Qwen3 ASR 模型加载成功 (使用 CapsWriter 适配器，支持长音频分块)")
             else:
-                # 尝试原生 sherpa-onnx (如果版本支持)
-                self.asr_model = sherpa_onnx.OfflineRecognizer.from_qwen3(
-                    encoder_frontend=QWEN3_ASR_FRONTEND,
-                    encoder_backend=QWEN3_ASR_BACKEND,
-                    decoder=QWEN3_ASR_LLM,
-                    num_threads=self.num_threads,
-                    sample_rate=SAMPLE_RATE,
-                    debug=False,
-                )
-                print("Qwen3 ASR 模型加载成功 (原生)")
+                self._load_native_qwen3_asr()
         except Exception as e:
             print(f"加载 Qwen3 ASR 模型失败: {e}")
             raise
 
         # 加载 Qwen3 aligner（可选）
-        if create_asr_engine:
-            if USE_ALIGNER and getattr(getattr(self.asr_model, "engine", None), "aligner", None):
+        if self.create_asr_engine:
+            if self.use_aligner and getattr(getattr(self.asr_model, "engine", None), "aligner", None):
                 print("Qwen3 Aligner 已通过 CapsWriter 适配器启用")
-            elif USE_ALIGNER:
+            elif self.use_aligner:
                 print("警告: CapsWriter 适配器未启用对齐器，SRT 将使用粗略时间戳")
-        elif USE_ALIGNER:
-            if all(os.path.exists(p) for p in [QWEN3_ALIGNER_FRONTEND, QWEN3_ALIGNER_BACKEND, QWEN3_ALIGNER_LLM]):
+        elif self.use_aligner:
+            aligner_cls = getattr(sherpa_onnx, "Aligner", None) if sherpa_onnx else None
+            if aligner_cls is None or not hasattr(aligner_cls, "from_qwen3"):
+                print("警告: 当前 sherpa-onnx Python 包未提供 Qwen3 Aligner 接口，SRT 将使用粗略时间戳")
+            elif all(path.exists() for path in self.model_paths.optional_aligner_files()):
                 try:
                     print("加载 Qwen3 Aligner 模型...")
-                    self.aligner = sherpa_onnx.Aligner.from_qwen3(
-                        encoder_frontend=QWEN3_ALIGNER_FRONTEND,
-                        encoder_backend=QWEN3_ALIGNER_BACKEND,
-                        decoder=QWEN3_ALIGNER_LLM,
+                    self.aligner = aligner_cls.from_qwen3(
+                        encoder_frontend=str(self.model_paths.qwen3_aligner_frontend),
+                        encoder_backend=str(self.model_paths.qwen3_aligner_backend),
+                        decoder=str(self.model_paths.qwen3_aligner_llm),
                         num_threads=self.num_threads,
                         sample_rate=SAMPLE_RATE,
                         debug=False,
@@ -228,15 +474,22 @@ class AudioTranscriber:
                 print("警告: 未找到完整的 Qwen3 Aligner 模型，SRT 将使用粗略时间戳")
 
         # 加载标点模型
-        punc_model_path = os.path.join(PUNC_MODEL_DIR, "model_quant.onnx")
-        if os.path.exists(punc_model_path):
+        punc_model_path = (
+            self.model_paths.punc_model_dir / "model_quant.onnx"
+            if self.model_paths.punc_model_dir is not None
+            else None
+        )
+        if punc_model_path is not None and punc_model_path.exists():
             try:
                 print(f"加载标点模型: {punc_model_path}")
                 import jieba
                 import logging
                 jieba.setLogLevel(logging.INFO)
 
-                self.punc_model = CT_Transformer(PUNC_MODEL_DIR, quantize=True)
+                if CT_Transformer is None:
+                    raise RuntimeError("未安装 funasr-onnx")
+
+                self.punc_model = CT_Transformer(str(self.model_paths.punc_model_dir), quantize=True)
                 print("标点模型加载成功")
             except Exception as e:
                 print(f"标点模型加载失败: {e}")
@@ -408,7 +661,7 @@ class AudioTranscriber:
         text = ""
         segments = []
 
-        if create_asr_engine and hasattr(self.asr_model, "engine"):
+        if self.create_asr_engine and hasattr(self.asr_model, "engine"):
             print("正在使用 Qwen 分块识别长音频...")
             result = self.asr_model.engine.asr(
                 audio=samples,
@@ -497,10 +750,25 @@ class AudioTranscriber:
 class MP3ToTextConverter:
     """音频转文本转换器"""
 
-    def __init__(self, input_dir: str, output_dir: str, num_threads: int = NUM_THREADS):
+    def __init__(
+        self,
+        input_dir: str,
+        output_dir: str,
+        num_threads: int = NUM_THREADS,
+        model_paths: Optional[ModelPaths] = None,
+        create_asr_engine: Optional[Callable[..., Any]] = None,
+        capswriter_status: Optional[str] = None,
+        use_aligner: bool = USE_ALIGNER,
+    ):
         self.input_dir = Path(input_dir).resolve()
         self.output_dir = Path(output_dir).resolve()
-        self.transcriber = AudioTranscriber(num_threads)
+        self.transcriber = AudioTranscriber(
+            num_threads=num_threads,
+            model_paths=model_paths,
+            create_asr_engine=create_asr_engine,
+            capswriter_status=capswriter_status,
+            use_aligner=use_aligner,
+        )
 
         progress_file = os.path.join(output_dir, "processed_qwen3_files.txt")
         self.progress_manager = ProgressManager(progress_file)
@@ -616,13 +884,32 @@ def main():
     parser.add_argument("--output", default=r"D:\video\mp3", help="输出目录")
     parser.add_argument("--threads", type=int, default=NUM_THREADS, help="线程数")
     parser.add_argument("--new", action="store_true", help="重新处理所有文件，不使用断点续传")
+    parser.add_argument("--model-dir", help="Qwen3 ASR 模型目录")
+    parser.add_argument("--capswriter-dir", help="CapsWriter-Offline 根目录")
+    parser.add_argument("--punc-model-dir", help="标点模型目录")
+    parser.add_argument("--no-aligner", action="store_true", help="禁用精确时间戳对齐")
 
     args = parser.parse_args()
 
     check_ffmpeg()
 
+    model_paths = build_model_paths(
+        explicit_model_dir=args.model_dir,
+        explicit_punc_model_dir=args.punc_model_dir,
+        explicit_capswriter_dir=args.capswriter_dir,
+    )
+    create_asr_engine, capswriter_status = load_capswriter_adapter(model_paths.capswriter_dir)
+
     try:
-        converter = MP3ToTextConverter(args.input, args.output, args.threads)
+        converter = MP3ToTextConverter(
+            args.input,
+            args.output,
+            args.threads,
+            model_paths=model_paths,
+            create_asr_engine=create_asr_engine,
+            capswriter_status=capswriter_status,
+            use_aligner=not args.no_aligner,
+        )
     except Exception as e:
         print(f"初始化转换器失败: {e}")
         return

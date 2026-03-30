@@ -15,7 +15,7 @@
 
 *   Python 3.8+
 *   ffmpeg (用于音频解码，推荐)
-*   [CapsWriter-Offline](https://github.com/HaujetZhao/CapsWriter-Offline) (需安装并配置模型路径)
+*   [CapsWriter-Offline](https://github.com/HaujetZhao/CapsWriter-Offline) (推荐，用于 GGUF 长音频分块识别)
 
 ## 快速开始
 
@@ -24,15 +24,33 @@
     pip install numpy librosa funasr-onnx jieba sherpa-onnx
     ```
 
-2.  修改 `mp3totext.py` 中的模型路径配置（如果需要）：
-    ```python
-    MODEL_DIR = r"C:\path\to\your\CapsWriter-Offline\models\Qwen3-ASR\Qwen3-ASR-1.7B"
+2.  准备模型目录。`--model-dir` 需要指向包含以下文件的目录：
+    ```text
+    qwen3_asr_encoder_frontend.int4.onnx
+    qwen3_asr_encoder_backend.int4.onnx
+    qwen3_asr_llm.q4_k.gguf
     ```
 
-3.  运行转录工具：
+3.  如果你使用 CapsWriter-Offline 的 Qwen3 GGUF 模型，额外传入 `--capswriter-dir` 指向 CapsWriter 根目录。
+
+4.  运行转录工具：
     ```bash
+    python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir" --model-dir "D:\path\to\Qwen3-ASR-1.7B" --capswriter-dir "D:\path\to\CapsWriter-Offline"
+    ```
+
+5.  也可以使用环境变量，避免每次都传参：
+    ```powershell
+    $env:AUDIO2TEXT_MODEL_DIR="D:\path\to\Qwen3-ASR-1.7B"
+    $env:AUDIO2TEXT_CAPSWRITER_DIR="D:\path\to\CapsWriter-Offline"
     python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir"
     ```
+
+## 兼容性说明
+
+*   本项目不再要求手改 `mp3totext.py` 里的本地绝对路径。
+*   如果 `CapsWriter-Offline` 可用，脚本会优先使用其 `create_asr_engine`，这也是当前 `.gguf` 模型的推荐运行方式。
+*   如果走原生 `sherpa-onnx` 回退路径，当前 PyPI `sherpa-onnx==1.12.34` 的 Python API 是 `OfflineRecognizer.from_qwen3_asr(...)`，不是 `from_qwen3(...)`。
+*   原生 `sherpa-onnx` 回退路径除了模型文件外，还需要 `vocab.json`、`merges.txt`、`tokenizer_config.json`。
 
 ## 命令行参数
 
@@ -40,6 +58,10 @@
 *   `--output`: 输出结果目录，默认为 `D:\video\mp3`。
 *   `--threads`: 识别使用的线程数。
 *   `--new`: 强制重新处理所有文件，忽略已有的进度记录。
+*   `--model-dir`: Qwen3 ASR 模型目录。
+*   `--capswriter-dir`: CapsWriter-Offline 根目录。
+*   `--punc-model-dir`: 标点模型目录。
+*   `--no-aligner`: 禁用精确时间戳对齐。
 
 ## SRT 语义检索界面
 
