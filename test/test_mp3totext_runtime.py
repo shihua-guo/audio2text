@@ -14,6 +14,13 @@ MODULE_PATH = REPO_ROOT / "mp3totext.py"
 def load_mp3totext(fake_sherpa):
     module_name = f"mp3totext_under_test_{uuid.uuid4().hex}"
 
+    if not isinstance(fake_sherpa, types.ModuleType):
+        sherpa_module = types.ModuleType("sherpa_onnx")
+        for key, value in vars(fake_sherpa).items():
+            setattr(sherpa_module, key, value)
+        sherpa_module.__path__ = []
+        fake_sherpa = sherpa_module
+
     fake_numpy = types.SimpleNamespace(
         ndarray=object,
         float32="float32",
@@ -78,6 +85,45 @@ class Mp3ToTextRuntimeTests(unittest.TestCase):
         self.assertEqual(calls[0]["decoder"], str(model_dir / module.QWEN3_ASR_FILENAMES[2]))
         self.assertEqual(calls[0]["tokenizer"], str(model_dir))
         self.assertEqual(calls[0]["num_threads"], 3)
+
+    def test_falls_back_to_submodule_offline_recognizer(self):
+        calls = []
+
+        class ExportedRecognizer:
+            pass
+
+        class SubmoduleRecognizer:
+            @classmethod
+            def from_qwen3_asr(cls, **kwargs):
+                calls.append(kwargs)
+                return types.SimpleNamespace()
+
+        fake_sherpa = types.SimpleNamespace(
+            OfflineRecognizer=ExportedRecognizer,
+            __version__="1.12.34",
+            __file__="C:/fake/site-packages/sherpa_onnx/__init__.py",
+        )
+
+        sys.modules["sherpa_onnx.offline_recognizer"] = types.SimpleNamespace(
+            OfflineRecognizer=SubmoduleRecognizer
+        )
+        module = load_mp3totext(fake_sherpa)
+
+        with TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir) / "Qwen3-ASR-1.7B"
+            model_dir.mkdir()
+            for filename in (
+                *module.QWEN3_ASR_FILENAMES,
+                *module.QWEN3_TOKENIZER_FILENAMES,
+            ):
+                (model_dir / filename).write_text("stub\n", encoding="utf-8")
+
+            module.AudioTranscriber(
+                model_paths=module.ModelPaths(model_dir=model_dir),
+                use_aligner=False,
+            )
+
+        self.assertEqual(len(calls), 1)
 
     def test_missing_tokenizer_files_raises_clear_error(self):
         class FakeRecognizer:

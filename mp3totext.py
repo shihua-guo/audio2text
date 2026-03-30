@@ -248,6 +248,40 @@ def load_capswriter_adapter(
     return capswriter_create_asr_engine, None
 
 
+def get_sherpa_runtime_info() -> str:
+    """返回当前 sherpa-onnx 运行时信息"""
+    if sherpa_onnx is None:
+        return "sherpa-onnx: 未安装"
+
+    version = getattr(sherpa_onnx, "__version__", "unknown")
+    module_file = getattr(sherpa_onnx, "__file__", "unknown")
+    return f"sherpa-onnx version={version}, module={module_file}"
+
+
+def resolve_offline_recognizer_cls():
+    """兼容不同导出方式，获取 sherpa-onnx 的 OfflineRecognizer"""
+    candidates = []
+
+    top_level_cls = getattr(sherpa_onnx, "OfflineRecognizer", None) if sherpa_onnx else None
+    if top_level_cls is not None:
+        candidates.append(top_level_cls)
+
+    if sherpa_onnx is not None:
+        try:
+            from sherpa_onnx.offline_recognizer import OfflineRecognizer as module_offline_recognizer
+        except Exception:
+            module_offline_recognizer = None
+
+        if module_offline_recognizer is not None and module_offline_recognizer not in candidates:
+            candidates.append(module_offline_recognizer)
+
+    for candidate in candidates:
+        if hasattr(candidate, "from_qwen3_asr") or hasattr(candidate, "from_qwen3"):
+            return candidate
+
+    return candidates[0] if candidates else None
+
+
 def format_srt_timestamp(seconds: float) -> str:
     """格式化为标准 SRT 时间戳"""
     total_milliseconds = max(int(round(seconds * 1000)), 0)
@@ -367,9 +401,12 @@ class AudioTranscriber:
                 f"--capswriter-dir / 环境变量 {CAPS_WRITER_DIR_ENV} 指向 CapsWriter-Offline。"
             )
 
-        recognizer_cls = getattr(sherpa_onnx, "OfflineRecognizer", None)
+        recognizer_cls = resolve_offline_recognizer_cls()
         if recognizer_cls is None:
-            raise RuntimeError("当前 sherpa-onnx 安装不包含 OfflineRecognizer。")
+            raise RuntimeError(
+                "当前 sherpa-onnx 安装不包含 OfflineRecognizer。"
+                f"\n{get_sherpa_runtime_info()}"
+            )
 
         if hasattr(recognizer_cls, "from_qwen3_asr"):
             missing_tokenizers = [path for path in self.model_paths.tokenizer_files() if not path.exists()]
@@ -408,6 +445,7 @@ class AudioTranscriber:
         raise RuntimeError(
             "当前安装的 sherpa-onnx 不包含 Qwen3-ASR Python API。"
             " PyPI 版 1.12.34 提供的是 OfflineRecognizer.from_qwen3_asr，不是 from_qwen3。"
+            f"\n{get_sherpa_runtime_info()}"
         )
 
     def load_models(self):
