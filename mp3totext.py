@@ -24,15 +24,27 @@ import hashlib
 import argparse
 import subprocess
 import shutil
+import importlib
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
+SCRIPT_DIR = Path(__file__).resolve().parent
+
 try:
     import sherpa_onnx
 except ImportError:
     sherpa_onnx = None
+
+try:
+    from portable_runtime import DATA_DIR, RUNTIME_CONFIG_PATH, load_runtime_config
+except ImportError:
+    DATA_DIR = SCRIPT_DIR / "data"
+    RUNTIME_CONFIG_PATH = SCRIPT_DIR / "config" / "runtime_config.json"
+
+    def load_runtime_config():
+        return None
 
 try:
     from funasr_onnx import CT_Transformer
@@ -43,7 +55,6 @@ except ImportError:
 SAMPLE_RATE = 16000
 NUM_THREADS = 4
 
-SCRIPT_DIR = Path(__file__).resolve().parent
 MODEL_DIR_ENV = "AUDIO2TEXT_MODEL_DIR"
 CAPS_WRITER_DIR_ENV = "AUDIO2TEXT_CAPSWRITER_DIR"
 PUNC_MODEL_DIR_ENV = "AUDIO2TEXT_PUNC_MODEL_DIR"
@@ -72,6 +83,47 @@ QWEN_MEMORY_CHUNKS = 1
 MAX_SUBTITLE_CHARS = 35
 MAX_SUBTITLE_DURATION = 6.0
 MAX_SUBTITLE_GAP = 1.0
+
+
+def runtime_config_value(field_name: str) -> Optional[str]:
+    runtime = load_runtime_config()
+    if runtime is None:
+        return None
+
+    value = getattr(runtime, field_name, "")
+    return value or None
+
+
+def runtime_config_model_hint() -> str:
+    if load_runtime_config() is None:
+        return ""
+    return f" 也可以在配置文件 {RUNTIME_CONFIG_PATH} 中设置相关模型目录。"
+
+
+def get_ffmpeg_executable() -> str:
+    configured = runtime_config_value("ffmpeg_path")
+    if configured and Path(configured).exists():
+        return configured
+    return "ffmpeg"
+
+
+def get_default_input_output_dirs() -> Tuple[str, str]:
+    if load_runtime_config() is None:
+        default_dir = r"D:\video\mp3"
+        return default_dir, default_dir
+
+    input_dir = DATA_DIR / "audio_input"
+    output_dir = DATA_DIR / "audio_output"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return str(input_dir), str(output_dir)
+
+
+def get_capswriter_runtime_dir() -> Path:
+    runtime_dir = DATA_DIR / "capswriter_runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / "logs").mkdir(parents=True, exist_ok=True)
+    return runtime_dir
 
 
 @dataclass
@@ -139,14 +191,20 @@ def configured_path(*values: Optional[str]) -> Optional[Path]:
     return None
 
 
+def has_capswriter_adapter(capswriter_dir: Path) -> bool:
+    """兼容 CapsWriter 将 qwen_asr_gguf 实现为单文件或包目录两种结构"""
+    adapter_file = capswriter_dir / "util" / "qwen_asr_gguf.py"
+    adapter_package = capswriter_dir / "util" / "qwen_asr_gguf" / "__init__.py"
+    return adapter_file.exists() or adapter_package.exists()
+
+
 def discover_capswriter_dir_from_model_dir(model_dir: Optional[Path]) -> Optional[Path]:
     """从模型目录向上查找 CapsWriter 根目录"""
     if model_dir is None:
         return None
 
     for candidate in model_dir.parents:
-        util_path = candidate / "util" / "qwen_asr_gguf.py"
-        if util_path.exists():
+        if has_capswriter_adapter(candidate):
             return candidate
 
     return None
@@ -154,7 +212,11 @@ def discover_capswriter_dir_from_model_dir(model_dir: Optional[Path]) -> Optiona
 
 def resolve_model_dir(explicit_model_dir: Optional[str], capswriter_dir: Optional[Path]) -> Optional[Path]:
     """解析 ASR 模型目录"""
-    configured = configured_path(explicit_model_dir, os.getenv(MODEL_DIR_ENV))
+    configured = configured_path(
+        explicit_model_dir,
+        os.getenv(MODEL_DIR_ENV),
+        runtime_config_value("asr_model_dir"),
+    )
     if configured is not None:
         return configured
 
@@ -180,7 +242,11 @@ def resolve_model_dir(explicit_model_dir: Optional[str], capswriter_dir: Optiona
 
 def resolve_punc_model_dir(explicit_punc_model_dir: Optional[str], capswriter_dir: Optional[Path]) -> Optional[Path]:
     """解析标点模型目录"""
-    configured = configured_path(explicit_punc_model_dir, os.getenv(PUNC_MODEL_DIR_ENV))
+    configured = configured_path(
+        explicit_punc_model_dir,
+        os.getenv(PUNC_MODEL_DIR_ENV),
+        runtime_config_value("punc_model_dir"),
+    )
     if configured is not None:
         return configured
 
@@ -212,6 +278,7 @@ def build_model_paths(
         explicit_capswriter_dir,
         os.getenv(CAPS_WRITER_DIR_ENV),
         os.getenv(LEGACY_CAPS_WRITER_DIR_ENV),
+        runtime_config_value("capswriter_dir"),
     )
     model_dir = resolve_model_dir(explicit_model_dir, capswriter_dir)
 
@@ -231,14 +298,20 @@ def load_capswriter_adapter(
     if capswriter_dir is None:
         return None, None
 
-    adapter_path = capswriter_dir / "util" / "qwen_asr_gguf.py"
-    if not adapter_path.exists():
-        return None, f"未在 {capswriter_dir} 找到 util/qwen_asr_gguf.py"
+    if not has_capswriter_adapter(capswriter_dir):
+        return None, f"未在 {capswriter_dir} 找到 util/qwen_asr_gguf.py 或 util/qwen_asr_gguf/__init__.py"
 
     for path in [capswriter_dir, capswriter_dir / "internal"]:
         path_str = str(path)
         if path_str not in sys.path:
             sys.path.insert(0, path_str)
+
+    try:
+        capswriter_config = importlib.import_module("config_client")
+        if hasattr(capswriter_config, "BASE_DIR"):
+            capswriter_config.BASE_DIR = str(get_capswriter_runtime_dir())
+    except Exception:
+        pass
 
     try:
         from util.qwen_asr_gguf import create_asr_engine as capswriter_create_asr_engine
@@ -281,7 +354,6 @@ def resolve_offline_recognizer_cls():
 
     return candidates[0] if candidates else None
 
-
 def format_srt_timestamp(seconds: float) -> str:
     """格式化为标准 SRT 时间戳"""
     total_milliseconds = max(int(round(seconds * 1000)), 0)
@@ -293,7 +365,8 @@ def format_srt_timestamp(seconds: float) -> str:
 
 def check_ffmpeg():
     """检查ffmpeg是否可用"""
-    if shutil.which("ffmpeg") is None:
+    ffmpeg_executable = get_ffmpeg_executable()
+    if shutil.which(ffmpeg_executable) is None and not Path(ffmpeg_executable).exists():
         try:
             import librosa
             print("警告: 未找到ffmpeg，将尝试使用librosa作为后备音频解码器")
@@ -383,7 +456,7 @@ class AudioTranscriber:
         if self.model_paths.model_dir is None:
             raise FileNotFoundError(
                 f"未找到 Qwen3 ASR 模型目录。请使用 --model-dir 或环境变量 {MODEL_DIR_ENV} 指向包含 "
-                f"{', '.join(QWEN3_ASR_FILENAMES)} 的目录。"
+                f"{', '.join(QWEN3_ASR_FILENAMES)} 的目录。{runtime_config_model_hint()}"
             )
 
         missing_files = [path for path in self.model_paths.required_asr_files() if not path.exists()]
@@ -391,7 +464,7 @@ class AudioTranscriber:
             missing_text = "\n".join(str(path) for path in missing_files)
             raise FileNotFoundError(
                 "未找到完整的 Qwen3 ASR 模型文件，请确认 --model-dir 指向正确目录。缺失文件:\n"
-                f"{missing_text}"
+                f"{missing_text}{runtime_config_model_hint()}"
             )
 
     def _load_native_qwen3_asr(self):
@@ -548,7 +621,7 @@ class AudioTranscriber:
         except ImportError:
             # Fallback to ffmpeg if librosa is not available
             ffmpeg_cmd = [
-                "ffmpeg",
+                get_ffmpeg_executable(),
                 "-i", audio_path,
                 "-f", "s16le",
                 "-acodec", "pcm_s16le",
@@ -918,8 +991,9 @@ class MP3ToTextConverter:
 
 def main():
     parser = argparse.ArgumentParser(description="MP3转文本工具 V3 - Qwen3 ASR")
-    parser.add_argument("--input", default=r"D:\video\mp3", help="输入音频文件目录")
-    parser.add_argument("--output", default=r"D:\video\mp3", help="输出目录")
+    default_input_dir, default_output_dir = get_default_input_output_dirs()
+    parser.add_argument("--input", default=default_input_dir, help="输入音频文件目录")
+    parser.add_argument("--output", default=default_output_dir, help="输出目录")
     parser.add_argument("--threads", type=int, default=NUM_THREADS, help="线程数")
     parser.add_argument("--new", action="store_true", help="重新处理所有文件，不使用断点续传")
     parser.add_argument("--model-dir", help="Qwen3 ASR 模型目录")

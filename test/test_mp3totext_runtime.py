@@ -53,6 +53,19 @@ class Mp3ToTextRuntimeTests(unittest.TestCase):
 
             self.assertEqual(module.discover_capswriter_dir_from_model_dir(model_dir), root)
 
+    def test_discovers_capswriter_dir_from_model_dir_with_package_layout(self):
+        module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "CapsWriter-Offline"
+            model_dir = root / "models" / "Qwen3-ASR" / "Qwen3-ASR-1.7B"
+            adapter_dir = root / "util" / "qwen_asr_gguf"
+            adapter_dir.mkdir(parents=True)
+            model_dir.mkdir(parents=True)
+            (adapter_dir / "__init__.py").write_text("# stub\n", encoding="utf-8")
+
+            self.assertEqual(module.discover_capswriter_dir_from_model_dir(model_dir), root)
+
     def test_uses_from_qwen3_asr_when_native_api_is_available(self):
         calls = []
 

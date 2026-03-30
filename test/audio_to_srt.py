@@ -8,6 +8,12 @@ import numpy as np
 # --- Configuration ---
 CAPS_WRITER_DIR = r"C:\Users\shihu\Documents\software\CapsWriter-Offline-20260304\CapsWriter-Offline"
 INTERNAL_DIR = os.path.join(CAPS_WRITER_DIR, "internal")
+
+# Disable GPU backends to prevent hanging on some systems
+os.environ["GGML_VULKAN_DISABLE"] = "1"
+os.environ["GGML_OPENCL_DISABLE"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 for path in [CAPS_WRITER_DIR, INTERNAL_DIR]:
     if path not in sys.path:
         sys.path.append(path)
@@ -16,7 +22,7 @@ def format_timestamp(seconds: float) -> str:
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
-    millis = int((seconds - int(seconds)) * 1000)
+    millis = int(round((seconds - int(seconds)) * 1000))
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 def group_sense_tokens(tokens, timestamps, offset, max_chars=35, max_gap=0.5, min_duration=0.8):
@@ -62,9 +68,11 @@ def transcribe_sensevoice(audio_path):
         print(f"[ERROR] Model not found: {model_path}")
         sys.exit(1)
 
+    print(f"DEBUG: Starting sherpa_onnx init with model_path: {model_path}...")
     recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
         model=model_path, tokens=tokens_path, use_itn=True, num_threads=4
     )
+    print("DEBUG: sherpa_onnx init complete!")
     
     print("Loading audio...")
     audio, _ = librosa.load(audio_path, sr=16000)

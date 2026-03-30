@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+
+from portable_runtime import DATA_DIR, RESOURCE_ROOT, load_runtime_config
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-APP_DATA_DIR = PROJECT_ROOT / "app_data"
+RUNTIME = load_runtime_config()
+PROJECT_ROOT = RESOURCE_ROOT
+APP_DATA_DIR = DATA_DIR / "search_app"
 DB_PATH = APP_DATA_DIR / "semantic_search.db"
 
 
@@ -19,7 +21,7 @@ class ChunkingConfig:
 
 @dataclass(frozen=True)
 class EmbeddingConfig:
-    default_model_name: str = "Qwen/Qwen3-Embedding-0.6B"
+    default_model_name: str = RUNTIME.embedding_model_dir or "Qwen/Qwen3-Embedding-0.6B"
     batch_size: int = 8
     max_length: int = 2048
     query_instruction: str = (

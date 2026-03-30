@@ -8,6 +8,7 @@ const state = {
 const els = {
   rootPath: document.getElementById("root-path"),
   modelName: document.getElementById("model-name"),
+  runtimeConfigHint: document.getElementById("runtime-config-hint"),
   queryInput: document.getElementById("query-input"),
   limitInput: document.getElementById("limit-input"),
   chooseFolderBtn: document.getElementById("choose-folder-btn"),
@@ -223,6 +224,9 @@ async function init() {
   const data = await request("/api/models");
   if (!els.modelName.value) {
     els.modelName.value = data.default_model_name;
+  }
+  if (els.runtimeConfigHint && data.runtime_config_path) {
+    els.runtimeConfigHint.textContent = `配置文件：${data.runtime_config_path}`;
   }
 }
 

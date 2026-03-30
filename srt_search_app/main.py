@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import threading
 from pathlib import Path
 
@@ -14,9 +15,11 @@ from .database import SearchDatabase
 from .embeddings import QwenEmbeddingBackend
 from .indexing import SemanticSearchService
 from .job_manager import JobManager
+from portable_runtime import RUNTIME_CONFIG_PATH, load_runtime_config
 
 
 FRONTEND_DIR = PROJECT_ROOT / "srt_search_app" / "frontend"
+RUNTIME = load_runtime_config()
 
 
 class StartIndexRequest(BaseModel):
@@ -57,25 +60,57 @@ def format_timestamp(seconds: float) -> str:
 
 
 def choose_directory() -> str:
-    import tkinter as tk
-    from tkinter import filedialog
+    powershell_command = """
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = '选择包含 SRT 文件的目录'
+$dialog.ShowNewFolderButton = $true
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+    Write-Output $dialog.SelectedPath
+}
+"""
 
-    selected_path = ""
-    done = threading.Event()
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-STA",
+                "-Command",
+                powershell_command,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        selected_path = result.stdout.strip()
+        if selected_path:
+            return selected_path
+    except Exception:
+        pass
 
-    def open_dialog() -> None:
-        nonlocal selected_path
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        selected_path = filedialog.askdirectory()
-        root.destroy()
-        done.set()
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
 
-    thread = threading.Thread(target=open_dialog)
-    thread.start()
-    done.wait()
-    return selected_path
+        selected_path = ""
+        done = threading.Event()
+
+        def open_dialog() -> None:
+            nonlocal selected_path
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            selected_path = filedialog.askdirectory()
+            root.destroy()
+            done.set()
+
+        thread = threading.Thread(target=open_dialog)
+        thread.start()
+        done.wait()
+        return selected_path
+    except Exception:
+        return ""
 
 
 @app.get("/")
@@ -87,7 +122,9 @@ async def index_page() -> FileResponse:
 async def get_models() -> dict:
     return {
         "default_model_name": EMBEDDING.default_model_name,
+        "runtime_config_path": str(RUNTIME_CONFIG_PATH),
         "recommended_models": [
+            EMBEDDING.default_model_name,
             "Qwen/Qwen3-Embedding-0.6B",
             "Qwen/Qwen3-Embedding-4B",
         ],

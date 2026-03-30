@@ -57,19 +57,10 @@ class TestUtils:
 class TestPipeline:
     @pytest.fixture(scope="class")
     def short_audio_path(self, tmp_path_factory):
-        # Create a tiny audio file (e.g. 1 second of silence) just for testing IO paths if needed.
-        # But actually we have `test_dialogue.mp3` in the current directory maybe?
-        test_dir = os.path.dirname(os.path.abspath(__file__))
-        dialogue_mp3 = os.path.join(test_dir, "test_dialogue.mp3")
-        
-        # If it doesn't exist, create a dummy wav file
-        if not os.path.exists(dialogue_mp3):
-            dummy_path = tmp_path_factory.mktemp("data") / "dummy.wav"
-            import soundfile as sf
-            sf.write(str(dummy_path), np.zeros(16000), 16000) # 1 sec silent
-            return str(dummy_path)
-            
-        return dialogue_mp3
+        dummy_path = tmp_path_factory.mktemp("data") / "dummy.wav"
+        import soundfile as sf
+        sf.write(str(dummy_path), np.zeros(16000), 16000) # 1 sec silent
+        return str(dummy_path)
 
     def test_transcribe_sensevoice_short(self, short_audio_path):
         # This integration test runs actual ASR

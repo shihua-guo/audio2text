@@ -45,8 +45,14 @@ class QwenEmbeddingBackend:
 
             from transformers import AutoModel, AutoTokenizer
 
-            tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
-            model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left", trust_remote_code=True)
+                model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"无法加载 embedding 模型: {model_name}。"
+                    "请确认离线电脑已把模型复制到配置文件指定目录，或在界面中填写可用的本地模型路径。"
+                ) from exc
             model.to(self._device)
             model.eval()
 
