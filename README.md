@@ -59,6 +59,7 @@
 *   本项目不再要求手改 `mp3totext.py` 里的本地绝对路径。
 *   如果 `CapsWriter-Offline` 可用，脚本会优先使用其 `create_asr_engine`，这也是当前 `.gguf` 模型的推荐运行方式。
 *   `--dml` 和 `--vulkan` 只对 CapsWriter 适配器路径生效，不能同时使用。
+*   即使启用了 `--dml` 或 `--vulkan`，长音频转录时 CPU 仍可能是主要瓶颈；脚本会额外输出可用 provider 和 DirectML 的实际启用状态。
 *   如果走原生 `sherpa-onnx` 回退路径，当前 PyPI `sherpa-onnx==1.12.34` 的 Python API 是 `OfflineRecognizer.from_qwen3_asr(...)`，不是 `from_qwen3(...)`。
 *   原生 `sherpa-onnx` 回退路径除了模型文件外，还需要 `vocab.json`、`merges.txt`、`tokenizer_config.json`。
 

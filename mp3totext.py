@@ -25,6 +25,7 @@ import argparse
 import subprocess
 import shutil
 import importlib
+import contextlib
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -354,6 +355,16 @@ def resolve_offline_recognizer_cls():
 
     return candidates[0] if candidates else None
 
+
+def get_onnxruntime_providers() -> Optional[List[str]]:
+    """返回 onnxruntime 当前可用 provider 列表"""
+    with contextlib.suppress(Exception):
+        import onnxruntime
+
+        return list(onnxruntime.get_available_providers())
+
+    return None
+
 def format_srt_timestamp(seconds: float) -> str:
     """格式化为标准 SRT 时间戳"""
     total_milliseconds = max(int(round(seconds * 1000)), 0)
@@ -525,6 +536,26 @@ class AudioTranscriber:
             f"\n{get_sherpa_runtime_info()}"
         )
 
+    def _report_capswriter_acceleration_status(self):
+        engine = getattr(self.asr_model, "engine", None)
+        encoder = getattr(engine, "encoder", None)
+        active_dml = getattr(encoder, "active_dml", None)
+
+        if self.use_dml:
+            providers = get_onnxruntime_providers()
+            if providers:
+                print(f"onnxruntime providers: {providers}")
+
+            if active_dml is True:
+                print("CapsWriter Encoder 实际启用了 DirectML；GGUF Decoder 仍可能主要占用 CPU。")
+            elif active_dml is False:
+                print("警告: 已请求 DirectML，但 CapsWriter Encoder 未启用 DirectML。请确认已安装 onnxruntime-directml。")
+            else:
+                print("警告: 已请求 DirectML，但无法从 CapsWriter 适配器确认其是否实际生效。")
+
+        if self.use_vulkan:
+            print("提示: Vulkan 目前只是请求 CapsWriter 的 GGUF/Vulkan 路径，实际转录过程中 CPU 仍可能是主要瓶颈。")
+
     def load_models(self):
         """加载模型"""
         print("正在加载模型...")
@@ -560,6 +591,7 @@ class AudioTranscriber:
                     enable_aligner=self.use_aligner,
                 )
                 print("Qwen3 ASR 模型加载成功 (使用 CapsWriter 适配器，支持长音频分块)")
+                self._report_capswriter_acceleration_status()
             else:
                 if self.use_dml or self.use_vulkan:
                     raise RuntimeError(

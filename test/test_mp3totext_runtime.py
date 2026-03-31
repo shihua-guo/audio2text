@@ -3,6 +3,8 @@ import sys
 import types
 import unittest
 import uuid
+import io
+import contextlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -164,6 +166,37 @@ class Mp3ToTextRuntimeTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0]["use_dml"])
         self.assertFalse(calls[0]["vulkan_enable"])
+
+    def test_reports_directml_activation_status(self):
+        def fake_create_asr_engine(**kwargs):
+            return types.SimpleNamespace(
+                engine=types.SimpleNamespace(
+                    aligner=None,
+                    encoder=types.SimpleNamespace(active_dml=True),
+                )
+            )
+
+        module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
+        module.get_onnxruntime_providers = lambda: ["DmlExecutionProvider", "CPUExecutionProvider"]
+
+        with TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir) / "Qwen3-ASR-1.7B"
+            model_dir.mkdir()
+            for filename in module.QWEN3_ASR_FILENAMES:
+                (model_dir / filename).write_text("stub\n", encoding="utf-8")
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                module.AudioTranscriber(
+                    model_paths=module.ModelPaths(model_dir=model_dir),
+                    create_asr_engine=fake_create_asr_engine,
+                    use_aligner=False,
+                    use_dml=True,
+                )
+
+        text = output.getvalue()
+        self.assertIn("onnxruntime providers", text)
+        self.assertIn("CapsWriter Encoder 实际启用了 DirectML", text)
 
     def test_gpu_flags_require_capswriter_adapter(self):
         class FakeRecognizer:
