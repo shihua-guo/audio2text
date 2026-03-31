@@ -3,6 +3,8 @@
   "asr_model_dir": "models/Qwen3-ASR/Qwen3-ASR-1.7B",
   "punc_model_dir": "models/Punct-CT-Transformer/punc_ct-transformer_cn-en",
   "embedding_model_dir": "models/embeddings/Qwen3-Embedding-0.6B",
+  "embedding_api_base": "",
+  "embedding_api_key": "",
   "ffmpeg_path": "",
   "search_port": 8000
 }

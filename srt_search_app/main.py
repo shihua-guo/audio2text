@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from .config import EMBEDDING, PROJECT_ROOT
 from .database import SearchDatabase
-from .embeddings import QwenEmbeddingBackend
+from .embeddings import EmbeddingBackend
 from .indexing import SemanticSearchService
 from .job_manager import JobManager
 from portable_runtime import RUNTIME_CONFIG_PATH, load_runtime_config
@@ -36,7 +36,7 @@ class SearchRequest(BaseModel):
 
 
 db = SearchDatabase()
-embedding_backend = QwenEmbeddingBackend()
+embedding_backend = EmbeddingBackend()
 service = SemanticSearchService(db=db, embedding_backend=embedding_backend)
 jobs = JobManager()
 
@@ -122,6 +122,8 @@ async def index_page() -> FileResponse:
 async def get_models() -> dict:
     return {
         "default_model_name": EMBEDDING.default_model_name,
+        "provider": "openai-compatible-api" if EMBEDDING.use_api else "local",
+        "api_base_url": EMBEDDING.api_base_url,
         "runtime_config_path": str(RUNTIME_CONFIG_PATH),
         "recommended_models": [
             EMBEDDING.default_model_name,

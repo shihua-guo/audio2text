@@ -6,7 +6,7 @@ from typing import Callable
 import numpy as np
 
 from .database import SearchDatabase
-from .embeddings import QwenEmbeddingBackend
+from .embeddings import EmbeddingBackend
 from .models import IndexJobStatus, SearchResult
 from .srt_parser import chunk_subtitles, parse_srt_file
 
@@ -15,7 +15,7 @@ ProgressCallback = Callable[[IndexJobStatus], None]
 
 
 class SemanticSearchService:
-    def __init__(self, db: SearchDatabase, embedding_backend: QwenEmbeddingBackend) -> None:
+    def __init__(self, db: SearchDatabase, embedding_backend: EmbeddingBackend) -> None:
         self.db = db
         self.embedding_backend = embedding_backend
         self._cache: dict[tuple[str, str], tuple[np.ndarray, list[dict]]] = {}

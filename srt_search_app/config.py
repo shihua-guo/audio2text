@@ -22,11 +22,17 @@ class ChunkingConfig:
 @dataclass(frozen=True)
 class EmbeddingConfig:
     default_model_name: str = RUNTIME.embedding_model_dir or "Qwen/Qwen3-Embedding-0.6B"
+    api_base_url: str = RUNTIME.embedding_api_base
+    api_key: str = RUNTIME.embedding_api_key
     batch_size: int = 8
     max_length: int = 2048
     query_instruction: str = (
         "Given a subtitle search query, retrieve relevant subtitle passages that answer the query."
     )
+
+    @property
+    def use_api(self) -> bool:
+        return bool(self.api_base_url)
 
 
 CHUNKING = ChunkingConfig()

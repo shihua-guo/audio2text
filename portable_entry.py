@@ -31,7 +31,8 @@ def show_paths() -> int:
     print(f"CapsWriter目录: {runtime.capswriter_dir or '(未配置)'}")
     print(f"ASR模型目录: {runtime.asr_model_dir or '(未配置)'}")
     print(f"标点模型目录: {runtime.punc_model_dir or '(未配置)'}")
-    print(f"Embedding模型目录: {runtime.embedding_model_dir or '(未配置)'}")
+    print(f"Embedding模型: {runtime.embedding_model_dir or '(未配置)'}")
+    print(f"Embedding API: {runtime.embedding_api_base or '(未配置)'}")
     return 0
 
 

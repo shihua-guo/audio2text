@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass
 from functools import lru_cache
@@ -42,6 +43,8 @@ class RuntimeConfig:
     asr_model_dir: str
     punc_model_dir: str
     embedding_model_dir: str
+    embedding_api_base: str
+    embedding_api_key: str
     ffmpeg_path: str
     search_port: int
 
@@ -52,9 +55,30 @@ def _default_config_payload() -> dict:
         "asr_model_dir": "models/Qwen3-ASR/Qwen3-ASR-1.7B",
         "punc_model_dir": "models/Punct-CT-Transformer/punc_ct-transformer_cn-en",
         "embedding_model_dir": "models/embeddings/Qwen3-Embedding-0.6B",
+        "embedding_api_base": "",
+        "embedding_api_key": "",
         "ffmpeg_path": "",
         "search_port": 8000,
     }
+
+
+def _text_value(payload: dict, key: str, *env_names: str) -> str:
+    value = str(payload.get(key, "")).strip()
+    if value:
+        return value
+    for env_name in env_names:
+        env_value = os.environ.get(env_name, "").strip()
+        if env_value:
+            return env_value
+    return ""
+
+
+def _resolve_embedding_model(value: str, base: Path, api_base: str) -> str:
+    if not value:
+        return ""
+    if api_base:
+        return value
+    return _resolve_path(value, base)
 
 
 def ensure_runtime_layout() -> None:
@@ -79,12 +103,28 @@ def load_runtime_config() -> RuntimeConfig:
     except Exception:
         pass
 
+    embedding_api_base = _text_value(
+        payload,
+        "embedding_api_base",
+        "AUDIO2TEXT_EMBEDDING_API_BASE",
+        "OPENAI_BASE_URL",
+    )
+    embedding_api_key = _text_value(
+        payload,
+        "embedding_api_key",
+        "AUDIO2TEXT_EMBEDDING_API_KEY",
+        "OPENAI_API_KEY",
+    )
+    embedding_model_dir = _text_value(payload, "embedding_model_dir")
+
     return RuntimeConfig(
-        capswriter_dir=_resolve_path(str(payload.get("capswriter_dir", "")).strip(), APP_ROOT),
-        asr_model_dir=_resolve_path(str(payload.get("asr_model_dir", "")).strip(), APP_ROOT),
-        punc_model_dir=_resolve_path(str(payload.get("punc_model_dir", "")).strip(), APP_ROOT),
-        embedding_model_dir=_resolve_path(str(payload.get("embedding_model_dir", "")).strip(), APP_ROOT),
-        ffmpeg_path=_resolve_path(str(payload.get("ffmpeg_path", "")).strip(), APP_ROOT),
+        capswriter_dir=_resolve_path(_text_value(payload, "capswriter_dir"), APP_ROOT),
+        asr_model_dir=_resolve_path(_text_value(payload, "asr_model_dir"), APP_ROOT),
+        punc_model_dir=_resolve_path(_text_value(payload, "punc_model_dir"), APP_ROOT),
+        embedding_model_dir=_resolve_embedding_model(embedding_model_dir, APP_ROOT, embedding_api_base),
+        embedding_api_base=embedding_api_base,
+        embedding_api_key=embedding_api_key,
+        ffmpeg_path=_resolve_path(_text_value(payload, "ffmpeg_path"), APP_ROOT),
         search_port=int(payload.get("search_port", 8000) or 8000),
     )
 

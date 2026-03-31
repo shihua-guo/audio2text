@@ -100,9 +100,27 @@ http://127.0.0.1:8000
 ### 使用流程
 
 1. 点击“选择文件夹”或手动填写包含 `.srt` 文件的根目录。
-2. 选择 embedding 模型，默认是 `Qwen/Qwen3-Embedding-0.6B`。
+2. 选择 embedding 模型。这里既可以填本地模型目录，也可以填 HuggingFace 模型名，或者在配置了 OpenAI 兼容 API 后填写远程模型名。
 3. 点击“增量更新索引”，等待后台完成本地切块和向量化。
 4. 在搜索框输入自然语言问题，查看命中的字幕片段、时间范围和上下文。
+
+### Embedding API 配置
+
+如果你希望 `embedding_model_dir` 通过 OpenAI 兼容接口调用，可以在 `config/runtime_config.json` 中这样配置：
+
+```json
+{
+  "embedding_model_dir": "text-embedding-3-small",
+  "embedding_api_base": "https://api.openai.com/v1",
+  "embedding_api_key": "sk-xxx"
+}
+```
+
+说明：
+
+*   配置了 `embedding_api_base` 之后，`embedding_model_dir` 会被当作远程模型名，不再按本地路径解析。
+*   `embedding_api_key` 为空时不会发送 `Authorization` 头，适合无鉴权的本地兼容服务。
+*   也支持通过环境变量覆盖：`AUDIO2TEXT_EMBEDDING_API_BASE`、`AUDIO2TEXT_EMBEDDING_API_KEY`，其中 API Key 也兼容 `OPENAI_API_KEY`。
 
 ### 模型建议
 

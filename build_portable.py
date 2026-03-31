@@ -43,6 +43,7 @@ OFFLINE_README = """Audio2Text 便携离线包
    - ASR 模型: models\\Qwen3-ASR\\Qwen3-ASR-1.7B
    - 标点模型: models\\Punct-CT-Transformer\\punc_ct-transformer_cn-en
    - Embedding 模型: models\\embeddings\\Qwen3-Embedding-0.6B
+   - 如需改走 OpenAI 兼容接口，可设置 embedding_api_base / embedding_api_key，并把 embedding_model_dir 改成接口模型名
 3. 启动方式:
    - 启动字幕检索.bat
    - 启动音频转写.bat
