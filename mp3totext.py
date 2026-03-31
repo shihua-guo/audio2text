@@ -441,12 +441,16 @@ class AudioTranscriber:
         create_asr_engine: Optional[Callable[..., Any]] = None,
         capswriter_status: Optional[str] = None,
         use_aligner: bool = USE_ALIGNER,
+        use_dml: bool = False,
+        use_vulkan: bool = False,
     ):
         self.num_threads = num_threads
         self.model_paths = model_paths or build_model_paths()
         self.create_asr_engine = create_asr_engine
         self.capswriter_status = capswriter_status
         self.use_aligner = use_aligner
+        self.use_dml = use_dml
+        self.use_vulkan = use_vulkan
         self.asr_model = None
         self.aligner = None
         self.punc_model = None
@@ -533,6 +537,12 @@ class AudioTranscriber:
             print(f"CapsWriter 目录: {self.model_paths.capswriter_dir}")
         if self.capswriter_status:
             print(f"CapsWriter 适配器不可用: {self.capswriter_status}")
+        if self.use_dml:
+            print("Qwen3 ASR 加速后端: DirectML")
+        elif self.use_vulkan:
+            print("Qwen3 ASR 加速后端: Vulkan")
+        else:
+            print("Qwen3 ASR 加速后端: CPU")
 
         try:
             if self.create_asr_engine:
@@ -544,13 +554,18 @@ class AudioTranscriber:
                     n_ctx=4096,
                     chunk_size=QWEN_CHUNK_SIZE,
                     pad_to=int(QWEN_CHUNK_SIZE),
-                    use_dml=False,
-                    vulkan_enable=False,
+                    use_dml=self.use_dml,
+                    vulkan_enable=self.use_vulkan,
                     verbose=False,
                     enable_aligner=self.use_aligner,
                 )
                 print("Qwen3 ASR 模型加载成功 (使用 CapsWriter 适配器，支持长音频分块)")
             else:
+                if self.use_dml or self.use_vulkan:
+                    raise RuntimeError(
+                        "当前 GPU 开关仅对 CapsWriter 适配器路径生效，但脚本没有加载到 CapsWriter 适配器。"
+                        "\n请确认 --capswriter-dir 指向完整的 CapsWriter-Offline 根目录。"
+                    )
                 self._load_native_qwen3_asr()
         except Exception as e:
             print(f"加载 Qwen3 ASR 模型失败: {e}")
@@ -870,6 +885,8 @@ class MP3ToTextConverter:
         create_asr_engine: Optional[Callable[..., Any]] = None,
         capswriter_status: Optional[str] = None,
         use_aligner: bool = USE_ALIGNER,
+        use_dml: bool = False,
+        use_vulkan: bool = False,
     ):
         self.input_dir = Path(input_dir).resolve()
         self.output_dir = Path(output_dir).resolve()
@@ -879,6 +896,8 @@ class MP3ToTextConverter:
             create_asr_engine=create_asr_engine,
             capswriter_status=capswriter_status,
             use_aligner=use_aligner,
+            use_dml=use_dml,
+            use_vulkan=use_vulkan,
         )
 
         progress_file = os.path.join(output_dir, "processed_qwen3_files.txt")
@@ -1000,8 +1019,13 @@ def main():
     parser.add_argument("--capswriter-dir", help="CapsWriter-Offline 根目录")
     parser.add_argument("--punc-model-dir", help="标点模型目录")
     parser.add_argument("--no-aligner", action="store_true", help="禁用精确时间戳对齐")
+    parser.add_argument("--dml", action="store_true", help="使用 DirectML 加速 Qwen3 ASR（需 CapsWriter 适配器）")
+    parser.add_argument("--vulkan", action="store_true", help="使用 Vulkan 加速 Qwen3 ASR（需 CapsWriter 适配器）")
 
     args = parser.parse_args()
+
+    if args.dml and args.vulkan:
+        parser.error("--dml 和 --vulkan 不能同时使用")
 
     check_ffmpeg()
 
@@ -1021,6 +1045,8 @@ def main():
             create_asr_engine=create_asr_engine,
             capswriter_status=capswriter_status,
             use_aligner=not args.no_aligner,
+            use_dml=args.dml,
+            use_vulkan=args.vulkan,
         )
     except Exception as e:
         print(f"初始化转换器失败: {e}")

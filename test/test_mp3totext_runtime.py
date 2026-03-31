@@ -138,6 +138,57 @@ class Mp3ToTextRuntimeTests(unittest.TestCase):
 
         self.assertEqual(len(calls), 1)
 
+    def test_passes_gpu_flags_to_capswriter_adapter(self):
+        calls = []
+
+        def fake_create_asr_engine(**kwargs):
+            calls.append(kwargs)
+            return types.SimpleNamespace(engine=types.SimpleNamespace(aligner=None))
+
+        module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
+
+        with TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir) / "Qwen3-ASR-1.7B"
+            model_dir.mkdir()
+            for filename in module.QWEN3_ASR_FILENAMES:
+                (model_dir / filename).write_text("stub\n", encoding="utf-8")
+
+            module.AudioTranscriber(
+                model_paths=module.ModelPaths(model_dir=model_dir),
+                create_asr_engine=fake_create_asr_engine,
+                use_aligner=False,
+                use_dml=True,
+                use_vulkan=False,
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0]["use_dml"])
+        self.assertFalse(calls[0]["vulkan_enable"])
+
+    def test_gpu_flags_require_capswriter_adapter(self):
+        class FakeRecognizer:
+            @classmethod
+            def from_qwen3_asr(cls, **kwargs):
+                return types.SimpleNamespace()
+
+        module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=FakeRecognizer))
+
+        with TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir) / "Qwen3-ASR-1.7B"
+            model_dir.mkdir()
+            for filename in (
+                *module.QWEN3_ASR_FILENAMES,
+                *module.QWEN3_TOKENIZER_FILENAMES,
+            ):
+                (model_dir / filename).write_text("stub\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "CapsWriter 适配器"):
+                module.AudioTranscriber(
+                    model_paths=module.ModelPaths(model_dir=model_dir),
+                    use_aligner=False,
+                    use_dml=True,
+                )
+
     def test_missing_tokenizer_files_raises_clear_error(self):
         class FakeRecognizer:
             @classmethod

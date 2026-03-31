@@ -38,6 +38,15 @@
     python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir" --model-dir "D:\path\to\Qwen3-ASR-1.7B" --capswriter-dir "D:\path\to\CapsWriter-Offline"
     ```
 
+4.1 如果你想直接尝试 GPU 开关：
+    ```bash
+    python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir" --model-dir "D:\path\to\Qwen3-ASR-1.7B" --capswriter-dir "D:\path\to\CapsWriter-Offline" --dml
+    ```
+    或：
+    ```bash
+    python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir" --model-dir "D:\path\to\Qwen3-ASR-1.7B" --capswriter-dir "D:\path\to\CapsWriter-Offline" --vulkan
+    ```
+
 5.  也可以使用环境变量，避免每次都传参：
     ```powershell
     $env:AUDIO2TEXT_MODEL_DIR="D:\path\to\Qwen3-ASR-1.7B"
@@ -49,6 +58,7 @@
 
 *   本项目不再要求手改 `mp3totext.py` 里的本地绝对路径。
 *   如果 `CapsWriter-Offline` 可用，脚本会优先使用其 `create_asr_engine`，这也是当前 `.gguf` 模型的推荐运行方式。
+*   `--dml` 和 `--vulkan` 只对 CapsWriter 适配器路径生效，不能同时使用。
 *   如果走原生 `sherpa-onnx` 回退路径，当前 PyPI `sherpa-onnx==1.12.34` 的 Python API 是 `OfflineRecognizer.from_qwen3_asr(...)`，不是 `from_qwen3(...)`。
 *   原生 `sherpa-onnx` 回退路径除了模型文件外，还需要 `vocab.json`、`merges.txt`、`tokenizer_config.json`。
 
@@ -62,6 +72,8 @@
 *   `--capswriter-dir`: CapsWriter-Offline 根目录。
 *   `--punc-model-dir`: 标点模型目录。
 *   `--no-aligner`: 禁用精确时间戳对齐。
+*   `--dml`: 使用 DirectML 加速 Qwen3 ASR。
+*   `--vulkan`: 使用 Vulkan 加速 Qwen3 ASR。
 
 ## SRT 语义检索界面
 
