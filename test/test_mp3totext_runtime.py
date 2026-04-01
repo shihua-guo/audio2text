@@ -43,6 +43,74 @@ def load_mp3totext(fake_sherpa):
 
 
 class Mp3ToTextRuntimeTests(unittest.TestCase):
+    def test_read_audio_prefers_ffmpeg_decode(self):
+        module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
+        commands = []
+
+        class FakeProcess:
+            returncode = 0
+
+            def communicate(self):
+                return (b"\x00\x00\x80?\x00\x00\x00@", b"")
+
+        def fake_popen(cmd, stdout=None, stderr=None):
+            commands.append((cmd, stdout, stderr))
+            return FakeProcess()
+
+        original_librosa = sys.modules.get("librosa")
+        sys.modules["librosa"] = types.SimpleNamespace(
+            load=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("librosa should not be called"))
+        )
+
+        try:
+            module.get_ffmpeg_executable = lambda: "ffmpeg"
+            module.np = types.SimpleNamespace(
+                float32="float32",
+                frombuffer=lambda data, dtype: {"data": data, "dtype": dtype},
+            )
+            module.subprocess = types.SimpleNamespace(Popen=fake_popen, PIPE="PIPE")
+
+            transcriber = object.__new__(module.AudioTranscriber)
+            result = transcriber.read_audio("input.mp3")
+        finally:
+            if original_librosa is None:
+                sys.modules.pop("librosa", None)
+            else:
+                sys.modules["librosa"] = original_librosa
+
+        self.assertEqual(result["dtype"], "float32")
+        self.assertEqual(result["data"], b"\x00\x00\x80?\x00\x00\x00@")
+        self.assertEqual(commands[0][0][0], "ffmpeg")
+        self.assertIn("pcm_f32le", commands[0][0])
+        self.assertIn("-ac", commands[0][0])
+        self.assertIn("-ar", commands[0][0])
+
+    def test_read_audio_falls_back_to_librosa_when_ffmpeg_fails(self):
+        module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
+        fake_samples = object()
+
+        original_librosa = sys.modules.get("librosa")
+        sys.modules["librosa"] = types.SimpleNamespace(
+            load=lambda *args, **kwargs: (fake_samples, module.SAMPLE_RATE)
+        )
+
+        try:
+            module.get_ffmpeg_executable = lambda: "ffmpeg"
+            module.subprocess = types.SimpleNamespace(
+                Popen=lambda *args, **kwargs: (_ for _ in ()).throw(OSError("ffmpeg unavailable")),
+                PIPE="PIPE",
+            )
+
+            transcriber = object.__new__(module.AudioTranscriber)
+            result = transcriber.read_audio("input.mp3")
+        finally:
+            if original_librosa is None:
+                sys.modules.pop("librosa", None)
+            else:
+                sys.modules["librosa"] = original_librosa
+
+        self.assertIs(result, fake_samples)
+
     def test_discovers_capswriter_dir_from_model_dir(self):
         module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
 

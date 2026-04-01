@@ -670,37 +670,54 @@ class AudioTranscriber:
 
     def read_audio(self, audio_path: str) -> np.ndarray:
         """读取音频并转为16k单声道float32"""
-        try:
-            import librosa
-            samples, _ = librosa.load(audio_path, sr=SAMPLE_RATE, mono=True)
-            return samples.astype(np.float32)
-        except ImportError:
-            # Fallback to ffmpeg if librosa is not available
-            ffmpeg_cmd = [
-                get_ffmpeg_executable(),
-                "-i", audio_path,
-                "-f", "s16le",
-                "-acodec", "pcm_s16le",
-                "-ac", "1",
-                "-ar", str(SAMPLE_RATE),
-                "-"
-            ]
+        ffmpeg_error = None
 
+        ffmpeg_cmd = [
+            get_ffmpeg_executable(),
+            "-nostdin",
+            "-i", audio_path,
+            "-vn",
+            "-f", "f32le",
+            "-acodec", "pcm_f32le",
+            "-ac", "1",
+            "-ar", str(SAMPLE_RATE),
+            "-"
+        ]
+
+        try:
+            # ffmpeg 先做下采样和混单声道，避免 librosa/soundfile 先把整段立体声搬进内存。
             process = subprocess.Popen(
                 ffmpeg_cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.PIPE
             )
-            data = process.stdout.read()
-            process.wait()
+            data, stderr = process.communicate()
+
+            if process.returncode != 0:
+                stderr_text = stderr.decode("utf-8", errors="ignore").strip()
+                raise RuntimeError(stderr_text or f"ffmpeg 解码失败: {audio_path}")
 
             if not data:
-                raise RuntimeError(f"ffmpeg 解码失败: {audio_path}")
+                raise RuntimeError(f"ffmpeg 未输出可用音频数据: {audio_path}")
 
-            samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            return np.frombuffer(data, dtype=np.float32)
+        except Exception as exc:
+            ffmpeg_error = exc
+
+        try:
+            import librosa
+
+            samples, _ = librosa.load(audio_path, sr=SAMPLE_RATE, mono=True, dtype=np.float32)
             return samples
+        except ImportError:
+            pass
         except Exception as e:
-            raise RuntimeError(f"音频读取失败 ({audio_path}): {e}")
+            raise RuntimeError(
+                f"音频读取失败 ({audio_path}): ffmpeg 解码失败: {ffmpeg_error}; "
+                f"librosa 也失败: {e}"
+            )
+
+        raise RuntimeError(f"音频读取失败 ({audio_path}): ffmpeg 解码失败: {ffmpeg_error}")
 
     def split_text_to_segments(self, text: str, total_duration: float) -> List[Segment]:
         """
