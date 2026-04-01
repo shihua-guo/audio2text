@@ -79,7 +79,7 @@ QWEN3_TOKENIZER_FILENAMES = ("vocab.json", "merges.txt", "tokenizer_config.json"
 # 是否启用 aligner
 USE_ALIGNER = True
 DEFAULT_LANGUAGE = "Chinese"
-QWEN_CHUNK_SIZE = 40.0
+QWEN_CHUNK_SIZE = 10.0
 QWEN_MEMORY_CHUNKS = 1
 MAX_SUBTITLE_CHARS = 35
 MAX_SUBTITLE_DURATION = 6.0
@@ -454,6 +454,8 @@ class AudioTranscriber:
         use_aligner: bool = USE_ALIGNER,
         use_dml: bool = False,
         use_vulkan: bool = False,
+        qwen_chunk_size: float = QWEN_CHUNK_SIZE,
+        qwen_memory_chunks: int = QWEN_MEMORY_CHUNKS,
     ):
         self.num_threads = num_threads
         self.model_paths = model_paths or build_model_paths()
@@ -462,6 +464,8 @@ class AudioTranscriber:
         self.use_aligner = use_aligner
         self.use_dml = use_dml
         self.use_vulkan = use_vulkan
+        self.qwen_chunk_size = qwen_chunk_size
+        self.qwen_memory_chunks = qwen_memory_chunks
         self.asr_model = None
         self.aligner = None
         self.punc_model = None
@@ -574,6 +578,11 @@ class AudioTranscriber:
             print("Qwen3 ASR 加速后端: Vulkan")
         else:
             print("Qwen3 ASR 加速后端: CPU")
+        if self.create_asr_engine:
+            print(
+                f"Qwen3 ASR 分块参数: chunk_size={self.qwen_chunk_size:.1f}s, "
+                f"memory_chunks={self.qwen_memory_chunks}"
+            )
 
         try:
             if self.create_asr_engine:
@@ -583,8 +592,8 @@ class AudioTranscriber:
                     encoder_backend_fn="qwen3_asr_encoder_backend.int4.onnx",
                     llm_fn="qwen3_asr_llm.q4_k.gguf",
                     n_ctx=4096,
-                    chunk_size=QWEN_CHUNK_SIZE,
-                    pad_to=int(QWEN_CHUNK_SIZE),
+                    chunk_size=self.qwen_chunk_size,
+                    pad_to=int(self.qwen_chunk_size),
                     use_dml=self.use_dml,
                     vulkan_enable=self.use_vulkan,
                     verbose=False,
@@ -825,8 +834,8 @@ class AudioTranscriber:
                 audio=samples,
                 context="",
                 language=DEFAULT_LANGUAGE,
-                chunk_size_sec=QWEN_CHUNK_SIZE,
-                memory_chunks=QWEN_MEMORY_CHUNKS,
+                chunk_size_sec=self.qwen_chunk_size,
+                memory_chunks=self.qwen_memory_chunks,
             )
             text = result.text
 
@@ -919,6 +928,8 @@ class MP3ToTextConverter:
         use_aligner: bool = USE_ALIGNER,
         use_dml: bool = False,
         use_vulkan: bool = False,
+        qwen_chunk_size: float = QWEN_CHUNK_SIZE,
+        qwen_memory_chunks: int = QWEN_MEMORY_CHUNKS,
     ):
         self.input_dir = Path(input_dir).resolve()
         self.output_dir = Path(output_dir).resolve()
@@ -930,6 +941,8 @@ class MP3ToTextConverter:
             use_aligner=use_aligner,
             use_dml=use_dml,
             use_vulkan=use_vulkan,
+            qwen_chunk_size=qwen_chunk_size,
+            qwen_memory_chunks=qwen_memory_chunks,
         )
 
         progress_file = os.path.join(output_dir, "processed_qwen3_files.txt")
@@ -1053,11 +1066,27 @@ def main():
     parser.add_argument("--no-aligner", action="store_true", help="禁用精确时间戳对齐")
     parser.add_argument("--dml", action="store_true", help="使用 DirectML 加速 Qwen3 ASR（需 CapsWriter 适配器）")
     parser.add_argument("--vulkan", action="store_true", help="使用 Vulkan 加速 Qwen3 ASR（需 CapsWriter 适配器）")
+    parser.add_argument(
+        "--qwen-chunk-size",
+        type=float,
+        default=QWEN_CHUNK_SIZE,
+        help="CapsWriter Qwen3 分块秒数。遇到 GGML_ASSERT(n_tokens_all <= cparams.n_batch) 时可进一步调小到 5-10。",
+    )
+    parser.add_argument(
+        "--qwen-memory-chunks",
+        type=int,
+        default=QWEN_MEMORY_CHUNKS,
+        help="CapsWriter Qwen3 保留的历史音频块数。显存/上下文紧张时可设为 0。",
+    )
 
     args = parser.parse_args()
 
     if args.dml and args.vulkan:
         parser.error("--dml 和 --vulkan 不能同时使用")
+    if args.qwen_chunk_size <= 0:
+        parser.error("--qwen-chunk-size 必须大于 0")
+    if args.qwen_memory_chunks < 0:
+        parser.error("--qwen-memory-chunks 不能小于 0")
 
     check_ffmpeg()
 
@@ -1079,6 +1108,8 @@ def main():
             use_aligner=not args.no_aligner,
             use_dml=args.dml,
             use_vulkan=args.vulkan,
+            qwen_chunk_size=args.qwen_chunk_size,
+            qwen_memory_chunks=args.qwen_memory_chunks,
         )
     except Exception as e:
         print(f"初始化转换器失败: {e}")

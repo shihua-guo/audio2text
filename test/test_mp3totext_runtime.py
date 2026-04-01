@@ -166,6 +166,44 @@ class Mp3ToTextRuntimeTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0]["use_dml"])
         self.assertFalse(calls[0]["vulkan_enable"])
+        self.assertEqual(calls[0]["chunk_size"], module.QWEN_CHUNK_SIZE)
+        self.assertEqual(calls[0]["pad_to"], int(module.QWEN_CHUNK_SIZE))
+
+    def test_passes_chunk_settings_to_capswriter_runtime(self):
+        engine_calls = []
+
+        class FakeEngine:
+            def asr(self, **kwargs):
+                engine_calls.append(kwargs)
+                return types.SimpleNamespace(text="stub", alignment=None)
+
+        def fake_create_asr_engine(**kwargs):
+            return types.SimpleNamespace(engine=FakeEngine())
+
+        module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
+
+        with TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir) / "Qwen3-ASR-1.7B"
+            model_dir.mkdir()
+            for filename in module.QWEN3_ASR_FILENAMES:
+                (model_dir / filename).write_text("stub\n", encoding="utf-8")
+
+            transcriber = module.AudioTranscriber(
+                model_paths=module.ModelPaths(model_dir=model_dir),
+                create_asr_engine=fake_create_asr_engine,
+                use_aligner=False,
+                qwen_chunk_size=6.0,
+                qwen_memory_chunks=0,
+            )
+
+            audio_file = Path(temp_dir) / "input.wav"
+            audio_file.write_bytes(b"stub")
+            transcriber.read_audio = lambda _: [0.0] * (module.SAMPLE_RATE * 2)
+            transcriber.transcribe_audio(str(audio_file))
+
+        self.assertEqual(len(engine_calls), 1)
+        self.assertEqual(engine_calls[0]["chunk_size_sec"], 6.0)
+        self.assertEqual(engine_calls[0]["memory_chunks"], 0)
 
     def test_reports_directml_activation_status(self):
         def fake_create_asr_engine(**kwargs):

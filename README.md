@@ -38,7 +38,12 @@
     python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir" --model-dir "D:\path\to\Qwen3-ASR-1.7B" --capswriter-dir "D:\path\to\CapsWriter-Offline"
     ```
 
-4.1 如果你想直接尝试 GPU 开关：
+4.1 如果遇到 `GGML_ASSERT(n_tokens_all <= cparams.n_batch)`，请把 Qwen 分块调小：
+    ```bash
+    python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir" --model-dir "D:\path\to\Qwen3-ASR-1.7B" --capswriter-dir "D:\path\to\CapsWriter-Offline" --qwen-chunk-size 5 --qwen-memory-chunks 0
+    ```
+
+4.2 如果你想直接尝试 GPU 开关：
     ```bash
     python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir" --model-dir "D:\path\to\Qwen3-ASR-1.7B" --capswriter-dir "D:\path\to\CapsWriter-Offline" --dml
     ```
@@ -62,6 +67,7 @@
 *   即使启用了 `--dml` 或 `--vulkan`，长音频转录时 CPU 仍可能是主要瓶颈；脚本会额外输出可用 provider 和 DirectML 的实际启用状态。
 *   如果走原生 `sherpa-onnx` 回退路径，当前 PyPI `sherpa-onnx==1.12.34` 的 Python API 是 `OfflineRecognizer.from_qwen3_asr(...)`，不是 `from_qwen3(...)`。
 *   原生 `sherpa-onnx` 回退路径除了模型文件外，还需要 `vocab.json`、`merges.txt`、`tokenizer_config.json`。
+*   如果 CapsWriter/Qwen3 GGUF 路径报 `GGML_ASSERT(n_tokens_all <= cparams.n_batch)`，说明单次分块过大或历史记忆过多，请调小 `--qwen-chunk-size`，必要时把 `--qwen-memory-chunks` 设为 `0`。
 
 ## 命令行参数
 
@@ -75,6 +81,8 @@
 *   `--no-aligner`: 禁用精确时间戳对齐。
 *   `--dml`: 使用 DirectML 加速 Qwen3 ASR。
 *   `--vulkan`: 使用 Vulkan 加速 Qwen3 ASR。
+*   `--qwen-chunk-size`: CapsWriter Qwen3 分块秒数，默认更保守以避免 GGUF `n_batch` 断言。
+*   `--qwen-memory-chunks`: CapsWriter Qwen3 保留的历史分块数，默认 `1`。
 
 ## SRT 语义检索界面
 
