@@ -80,10 +80,11 @@ QWEN3_TOKENIZER_FILENAMES = ("vocab.json", "merges.txt", "tokenizer_config.json"
 USE_ALIGNER = True
 DEFAULT_LANGUAGE = "Chinese"
 QWEN_CHUNK_SIZE = 10.0
-QWEN_MEMORY_CHUNKS = 1
+QWEN_MEMORY_CHUNKS = 0
 MAX_SUBTITLE_CHARS = 35
 MAX_SUBTITLE_DURATION = 6.0
 MAX_SUBTITLE_GAP = 1.0
+SEGMENT_DUPLICATE_TIME_TOLERANCE = 0.5
 
 
 def runtime_config_value(field_name: str) -> Optional[str]:
@@ -374,6 +375,11 @@ def format_srt_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
 
 
+def normalize_segment_text(text: str) -> str:
+    """比较字幕文本时忽略空白和首尾常见标点"""
+    return "".join(text.split()).strip("，。！？；：,.!?;:、")
+
+
 def check_ffmpeg():
     """检查ffmpeg是否可用"""
     ffmpeg_executable = get_ffmpeg_executable()
@@ -583,6 +589,8 @@ class AudioTranscriber:
                 f"Qwen3 ASR 分块参数: chunk_size={self.qwen_chunk_size:.1f}s, "
                 f"memory_chunks={self.qwen_memory_chunks}"
             )
+            if self.qwen_memory_chunks > 0:
+                print("提示: 某些 CapsWriter 版本在 memory_chunks > 0 时可能出现长音频重复字幕")
 
         try:
             if self.create_asr_engine:
@@ -754,6 +762,37 @@ class AudioTranscriber:
 
         return segments
 
+    def is_duplicate_segment(self, previous: Segment, current: Segment) -> bool:
+        """过滤连续重复的字幕片段"""
+        if normalize_segment_text(previous.text) != normalize_segment_text(current.text):
+            return False
+
+        return (
+            abs(previous.start - current.start) <= SEGMENT_DUPLICATE_TIME_TOLERANCE
+            and abs(previous.end - current.end) <= SEGMENT_DUPLICATE_TIME_TOLERANCE
+        )
+
+    def deduplicate_segments(self, segments: List[Segment]) -> List[Segment]:
+        if not segments:
+            return []
+
+        deduped: List[Segment] = []
+        for segment in segments:
+            text = segment.text.strip()
+            if not text:
+                continue
+
+            cleaned = Segment(
+                start=float(segment.start),
+                duration=max(float(segment.duration), 0.1),
+                text=text,
+            )
+            if deduped and self.is_duplicate_segment(deduped[-1], cleaned):
+                continue
+            deduped.append(cleaned)
+
+        return deduped
+
     def build_segments_from_alignment(self, items: List[object]) -> List[Segment]:
         """把逐词/逐句对齐结果合并为更适合字幕显示的片段"""
         if not items:
@@ -912,6 +951,7 @@ class AudioTranscriber:
         else:
             segments = self.split_text_to_segments(text_with_punc, total_duration)
 
+        segments = self.deduplicate_segments(segments)
         processing_time = time.time() - start_time
         return segments, processing_time
 

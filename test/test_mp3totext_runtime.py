@@ -273,6 +273,81 @@ class Mp3ToTextRuntimeTests(unittest.TestCase):
         self.assertEqual(engine_calls[0]["chunk_size_sec"], 6.0)
         self.assertEqual(engine_calls[0]["memory_chunks"], 0)
 
+    def test_capswriter_runtime_uses_zero_memory_chunks_by_default(self):
+        engine_calls = []
+
+        class FakeEngine:
+            def asr(self, **kwargs):
+                engine_calls.append(kwargs)
+                return types.SimpleNamespace(text="stub", alignment=None)
+
+        def fake_create_asr_engine(**kwargs):
+            return types.SimpleNamespace(engine=FakeEngine())
+
+        module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
+
+        with TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir) / "Qwen3-ASR-1.7B"
+            model_dir.mkdir()
+            for filename in module.QWEN3_ASR_FILENAMES:
+                (model_dir / filename).write_text("stub\n", encoding="utf-8")
+
+            transcriber = module.AudioTranscriber(
+                model_paths=module.ModelPaths(model_dir=model_dir),
+                create_asr_engine=fake_create_asr_engine,
+                use_aligner=False,
+            )
+
+            audio_file = Path(temp_dir) / "input.wav"
+            audio_file.write_bytes(b"stub")
+            transcriber.read_audio = lambda _: [0.0] * (module.SAMPLE_RATE * 2)
+            transcriber.transcribe_audio(str(audio_file))
+
+        self.assertEqual(len(engine_calls), 1)
+        self.assertEqual(engine_calls[0]["memory_chunks"], 0)
+
+    def test_deduplicates_adjacent_alignment_segments_with_same_timestamps(self):
+        repeated_text = "事儿啊，你说这事儿啊，你说这事儿啊，你说这事儿啊，你说这"
+
+        class FakeEngine:
+            def asr(self, **kwargs):
+                item = types.SimpleNamespace(
+                    text=repeated_text,
+                    start_time=2700.0,
+                    end_time=2700.1,
+                )
+                return types.SimpleNamespace(
+                    text=repeated_text,
+                    alignment=types.SimpleNamespace(items=[item, item, item]),
+                )
+
+        def fake_create_asr_engine(**kwargs):
+            return types.SimpleNamespace(engine=FakeEngine())
+
+        module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
+
+        with TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir) / "Qwen3-ASR-1.7B"
+            model_dir.mkdir()
+            for filename in module.QWEN3_ASR_FILENAMES:
+                (model_dir / filename).write_text("stub\n", encoding="utf-8")
+
+            transcriber = module.AudioTranscriber(
+                model_paths=module.ModelPaths(model_dir=model_dir),
+                create_asr_engine=fake_create_asr_engine,
+                use_aligner=False,
+            )
+
+            audio_file = Path(temp_dir) / "input.wav"
+            audio_file.write_bytes(b"stub")
+            transcriber.read_audio = lambda _: [0.0] * (module.SAMPLE_RATE * 2)
+            segments, _ = transcriber.transcribe_audio(str(audio_file))
+
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].text, repeated_text)
+        self.assertEqual(segments[0].start, 2700.0)
+        self.assertAlmostEqual(segments[0].duration, 0.1)
+
     def test_reports_directml_activation_status(self):
         def fake_create_asr_engine(**kwargs):
             return types.SimpleNamespace(

@@ -68,6 +68,7 @@
 *   如果走原生 `sherpa-onnx` 回退路径，当前 PyPI `sherpa-onnx==1.12.34` 的 Python API 是 `OfflineRecognizer.from_qwen3_asr(...)`，不是 `from_qwen3(...)`。
 *   原生 `sherpa-onnx` 回退路径除了模型文件外，还需要 `vocab.json`、`merges.txt`、`tokenizer_config.json`。
 *   如果 CapsWriter/Qwen3 GGUF 路径报 `GGML_ASSERT(n_tokens_all <= cparams.n_batch)`，说明单次分块过大或历史记忆过多，请调小 `--qwen-chunk-size`，必要时把 `--qwen-memory-chunks` 设为 `0`。
+*   某些 CapsWriter 版本在 `memory_chunks > 0` 时会把上一块的文字再次带回结果，表现为长音频字幕重复。项目默认值已改为 `0`，只有在确实需要更强上下文衔接时再手动调大。
 
 ## 命令行参数
 
@@ -82,7 +83,7 @@
 *   `--dml`: 使用 DirectML 加速 Qwen3 ASR。
 *   `--vulkan`: 使用 Vulkan 加速 Qwen3 ASR。
 *   `--qwen-chunk-size`: CapsWriter Qwen3 分块秒数，默认更保守以避免 GGUF `n_batch` 断言。
-*   `--qwen-memory-chunks`: CapsWriter Qwen3 保留的历史分块数，默认 `1`。
+*   `--qwen-memory-chunks`: CapsWriter Qwen3 保留的历史分块数，默认 `0`，以避免长音频把历史字幕重复写入结果。
 
 ## SRT 语义检索界面
 
