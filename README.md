@@ -24,26 +24,40 @@
     pip install numpy librosa funasr-onnx jieba sherpa-onnx
     ```
 
-2.  准备模型目录。`--model-dir` 需要指向包含以下文件的目录：
+2.  准备模型目录。`--model-dir` 需要指向包含以下 ASR 文件的目录：
     ```text
     qwen3_asr_encoder_frontend.int4.onnx
     qwen3_asr_encoder_backend.int4.onnx
     qwen3_asr_llm.q4_k.gguf
     ```
 
-3.  如果你使用 CapsWriter-Offline 的 Qwen3 GGUF 模型，额外传入 `--capswriter-dir` 指向 CapsWriter 根目录。
+3.  选择一种运行方式：
 
-4.  运行转录工具：
+    推荐方式：使用完整的 `CapsWriter-Offline` 目录，并额外传入 `--capswriter-dir` 指向 CapsWriter 根目录。
+
+    原生 `sherpa-onnx` 回退方式：除了上面的 3 个 ASR 文件外，`--model-dir` 目录里还必须额外包含：
+    ```text
+    vocab.json
+    merges.txt
+    tokenizer_config.json
+    ```
+
+4.  使用 CapsWriter 方式运行：
     ```bash
     python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir" --model-dir "D:\path\to\Qwen3-ASR-1.7B" --capswriter-dir "D:\path\to\CapsWriter-Offline"
     ```
 
-4.1 如果遇到 `GGML_ASSERT(n_tokens_all <= cparams.n_batch)`，请把 Qwen 分块调小：
+4.1 如果你不使用 CapsWriter，而是直接走原生 `sherpa-onnx`：
+    ```bash
+    python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir" --model-dir "D:\path\to\Qwen3-ASR-1.7B"
+    ```
+
+4.2 如果遇到 `GGML_ASSERT(n_tokens_all <= cparams.n_batch)`，请把 Qwen 分块调小：
     ```bash
     python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir" --model-dir "D:\path\to\Qwen3-ASR-1.7B" --capswriter-dir "D:\path\to\CapsWriter-Offline" --qwen-chunk-size 5 --qwen-memory-chunks 0
     ```
 
-4.2 如果你想直接尝试 GPU 开关：
+4.3 如果你想直接尝试 GPU 开关：
     ```bash
     python mp3totext.py --input "D:\your\audio\dir" --output "D:\output\dir" --model-dir "D:\path\to\Qwen3-ASR-1.7B" --capswriter-dir "D:\path\to\CapsWriter-Offline" --dml
     ```
@@ -69,6 +83,13 @@
 *   原生 `sherpa-onnx` 回退路径除了模型文件外，还需要 `vocab.json`、`merges.txt`、`tokenizer_config.json`。
 *   如果 CapsWriter/Qwen3 GGUF 路径报 `GGML_ASSERT(n_tokens_all <= cparams.n_batch)`，说明单次分块过大或历史记忆过多，请调小 `--qwen-chunk-size`，必要时把 `--qwen-memory-chunks` 设为 `0`。
 *   某些 CapsWriter 版本在 `memory_chunks > 0` 时会把上一块的文字再次带回结果，表现为长音频字幕重复。项目默认值已改为 `0`，只有在确实需要更强上下文衔接时再手动调大。
+
+## 常见报错
+
+*   `未找到Qwen3 ASR模型文件: ...qwen3_asr_encoder_frontend.int4.onnx`
+    说明脚本当前解析到的 `--model-dir` 或默认模型目录不对。请显式传入 `--model-dir`，不要依赖旧的本地绝对路径。
+*   `type object 'OfflineRecognizer' has no attribute 'from_qwen3'`
+    说明你运行的是旧版本脚本。当前 PyPI `sherpa-onnx==1.12.34` 应使用 `OfflineRecognizer.from_qwen3_asr(...)`。请更新本仓库代码后再运行。
 
 ## 命令行参数
 
