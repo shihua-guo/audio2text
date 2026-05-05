@@ -85,6 +85,8 @@ MAX_SUBTITLE_CHARS = 35
 MAX_SUBTITLE_DURATION = 6.0
 MAX_SUBTITLE_GAP = 1.0
 SEGMENT_DUPLICATE_TIME_TOLERANCE = 0.5
+INTERNAL_REPEAT_MIN_UNIT_CHARS = 4
+INTERNAL_REPEAT_MIN_REPEATS = 3
 
 
 def runtime_config_value(field_name: str) -> Optional[str]:
@@ -378,6 +380,26 @@ def format_srt_timestamp(seconds: float) -> str:
 def normalize_segment_text(text: str) -> str:
     """比较字幕文本时忽略空白和首尾常见标点"""
     return "".join(text.split()).strip("，。！？；：,.!?;:、")
+
+
+def collapse_internal_repetition(text: str) -> str:
+    """压缩单条字幕中模型循环输出的完整重复短句"""
+    stripped = text.strip()
+    if not stripped:
+        return ""
+
+    max_unit_len = len(stripped) // INTERNAL_REPEAT_MIN_REPEATS
+    for unit_len in range(INTERNAL_REPEAT_MIN_UNIT_CHARS, max_unit_len + 1):
+        unit = stripped[:unit_len]
+        repeat_count, remainder = divmod(len(stripped), unit_len)
+        if repeat_count < INTERNAL_REPEAT_MIN_REPEATS:
+            continue
+
+        expected = unit * repeat_count + unit[:remainder]
+        if expected == stripped:
+            return unit.strip()
+
+    return stripped
 
 
 def check_ffmpeg():
@@ -778,7 +800,7 @@ class AudioTranscriber:
 
         deduped: List[Segment] = []
         for segment in segments:
-            text = segment.text.strip()
+            text = collapse_internal_repetition(segment.text)
             if not text:
                 continue
 
