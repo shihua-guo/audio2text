@@ -14,9 +14,7 @@ MP3文件转文本工具 V3
 import os
 import sys
 
-# 在加载任何 GPU 相关库之前设置环境变量
-os.environ["VK_ICD_FILENAMES"] = "none"
-os.environ["GGML_VK_VISIBLE_DEVICES"] = ""
+# 保留 OpenMP 兼容设置；不要默认禁用 Vulkan，否则 --vulkan 无法真正尝试 GPU 路径。
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"  # 允许多个 OpenMP 运行时共存
 
 import time
@@ -81,6 +79,7 @@ USE_ALIGNER = True
 DEFAULT_LANGUAGE = "Chinese"
 QWEN_CHUNK_SIZE = 10.0
 QWEN_MEMORY_CHUNKS = 0
+LIBROSA_FALLBACK_MAX_BYTES = 20 * 1024 * 1024
 MAX_SUBTITLE_CHARS = 35
 MAX_SUBTITLE_DURATION = 6.0
 MAX_SUBTITLE_GAP = 1.0
@@ -408,11 +407,18 @@ def check_ffmpeg():
     if shutil.which(ffmpeg_executable) is None and not Path(ffmpeg_executable).exists():
         try:
             import librosa
-            print("警告: 未找到ffmpeg，将尝试使用librosa作为后备音频解码器")
+            print("警告: 未找到ffmpeg，短音频将尝试使用librosa后备解码；长音频需要安装ffmpeg")
         except ImportError:
             print("错误: 未找到ffmpeg，且未安装librosa，无法进行音频解码")
             print("Windows下载地址: https://www.gyan.dev/ffmpeg/builds/")
             sys.exit(1)
+
+
+def should_skip_librosa_fallback(audio_path: str) -> bool:
+    """大文件不走 librosa 后备，避免把压缩音频一次性解成数 GB 数组。"""
+    with contextlib.suppress(OSError):
+        return Path(audio_path).stat().st_size > LIBROSA_FALLBACK_MAX_BYTES
+    return False
 
 
 @dataclass
@@ -733,6 +739,13 @@ class AudioTranscriber:
             return np.frombuffer(data, dtype=np.float32)
         except Exception as exc:
             ffmpeg_error = exc
+
+        if should_skip_librosa_fallback(audio_path):
+            raise RuntimeError(
+                f"音频读取失败 ({audio_path}): ffmpeg 解码失败: {ffmpeg_error}; "
+                "文件较大，已跳过 librosa 后备解码以避免一次性分配大量内存。"
+                f"请安装 ffmpeg，或在 {RUNTIME_CONFIG_PATH} 中设置 ffmpeg_path。"
+            )
 
         try:
             import librosa

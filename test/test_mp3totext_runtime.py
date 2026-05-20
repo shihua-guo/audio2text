@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import sys
 import types
 import unittest
@@ -43,6 +44,19 @@ def load_mp3totext(fake_sherpa):
 
 
 class Mp3ToTextRuntimeTests(unittest.TestCase):
+    def test_import_does_not_disable_vulkan_environment(self):
+        original_vk_icd = os.environ.pop("VK_ICD_FILENAMES", None)
+        original_visible_devices = os.environ.pop("GGML_VK_VISIBLE_DEVICES", None)
+        try:
+            load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
+            self.assertNotIn("VK_ICD_FILENAMES", os.environ)
+            self.assertNotIn("GGML_VK_VISIBLE_DEVICES", os.environ)
+        finally:
+            if original_vk_icd is not None:
+                os.environ["VK_ICD_FILENAMES"] = original_vk_icd
+            if original_visible_devices is not None:
+                os.environ["GGML_VK_VISIBLE_DEVICES"] = original_visible_devices
+
     def test_read_audio_prefers_ffmpeg_decode(self):
         module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
         commands = []
@@ -84,6 +98,35 @@ class Mp3ToTextRuntimeTests(unittest.TestCase):
         self.assertIn("pcm_f32le", commands[0][0])
         self.assertIn("-ac", commands[0][0])
         self.assertIn("-ar", commands[0][0])
+
+    def test_read_audio_skips_librosa_fallback_for_large_files(self):
+        module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))
+
+        original_librosa = sys.modules.get("librosa")
+        sys.modules["librosa"] = types.SimpleNamespace(
+            load=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("librosa should not be called"))
+        )
+
+        try:
+            module.get_ffmpeg_executable = lambda: "ffmpeg"
+            module.subprocess = types.SimpleNamespace(
+                Popen=lambda *args, **kwargs: (_ for _ in ()).throw(OSError("ffmpeg unavailable")),
+                PIPE="PIPE",
+            )
+
+            with TemporaryDirectory() as temp_dir:
+                audio_path = Path(temp_dir) / "large.mp3"
+                with open(audio_path, "wb") as audio_file:
+                    audio_file.truncate(module.LIBROSA_FALLBACK_MAX_BYTES + 1)
+
+                transcriber = object.__new__(module.AudioTranscriber)
+                with self.assertRaisesRegex(RuntimeError, "跳过 librosa"):
+                    transcriber.read_audio(str(audio_path))
+        finally:
+            if original_librosa is None:
+                sys.modules.pop("librosa", None)
+            else:
+                sys.modules["librosa"] = original_librosa
 
     def test_read_audio_falls_back_to_librosa_when_ffmpeg_fails(self):
         module = load_mp3totext(types.SimpleNamespace(OfflineRecognizer=object))

@@ -14,7 +14,7 @@
 ## 环境要求
 
 *   Python 3.8+
-*   ffmpeg (用于音频解码，推荐)
+*   ffmpeg (用于音频解码；长音频强烈建议安装，否则会拒绝使用 `librosa` 整段读入大文件)
 *   [CapsWriter-Offline](https://github.com/HaujetZhao/CapsWriter-Offline) (推荐，用于 GGUF 长音频分块识别)
 
 ## 快速开始
@@ -83,6 +83,7 @@
 *   原生 `sherpa-onnx` 回退路径除了模型文件外，还需要 `vocab.json`、`merges.txt`、`tokenizer_config.json`。
 *   如果 CapsWriter/Qwen3 GGUF 路径报 `GGML_ASSERT(n_tokens_all <= cparams.n_batch)`，说明单次分块过大或历史记忆过多，请调小 `--qwen-chunk-size`，必要时把 `--qwen-memory-chunks` 设为 `0`。
 *   某些 CapsWriter 版本在 `memory_chunks > 0` 时会把上一块的文字再次带回结果，表现为长音频字幕重复。项目默认值已改为 `0`，只有在确实需要更强上下文衔接时再手动调大。
+*   项目不再默认设置 `VK_ICD_FILENAMES=none`，因此 `--vulkan` 可以真正请求 CapsWriter/llama.cpp 的 Vulkan 路径；是否生效仍取决于 CapsWriter 构建、显卡驱动和 llama.cpp 后端支持。
 
 ## 常见报错
 
@@ -90,6 +91,8 @@
     说明脚本当前解析到的 `--model-dir` 或默认模型目录不对。请显式传入 `--model-dir`，不要依赖旧的本地绝对路径。
 *   `type object 'OfflineRecognizer' has no attribute 'from_qwen3'`
     说明你运行的是旧版本脚本。当前 PyPI `sherpa-onnx==1.12.34` 应使用 `OfflineRecognizer.from_qwen3_asr(...)`。请更新本仓库代码后再运行。
+*   `Unable to allocate ... GiB`
+    说明当前走到了 `librosa` 整段读音频路径。长音频请安装 `ffmpeg` 并确保命令行可直接运行，或在 `config/runtime_config.json` 里设置 `ffmpeg_path` 指向 `ffmpeg.exe`。
 
 ## 命令行参数
 
